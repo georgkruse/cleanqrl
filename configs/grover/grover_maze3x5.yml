@@ -1,0 +1,58 @@
+type:                             QRL                   # choose a type: RL, GA, Hypernetwork (DEPRECATED)
+alg:                              Grover                # name of the algorithm
+seed:                             42                    # seed for ray alogorithms/tensorflow/pytorch for reproduceabel results
+constant_seed:                    False                 # setting the same seed accross all runs
+checkpoint_at_end:                False                 # create checkpoint at the end of training
+checkpoint_freq:                  5000                  # set checkpoint frequency, depends on training iterations
+ray_local_mode:                   False                 # set local_mode of ray to True for debugging
+ray_logging_path:                 logs/paper/3x5/grover              # logging directory
+total_num_cpus:                   10                    # total number of cpus
+total_num_gpus:                   0                     # total number of gpus
+ray_num_trial_samples:            10                     # number of training seeds per combination
+training_iterations:              2000                    # number of training iterations
+run_sections:                                           # specify the sections ['qrl_training' and 'plotting']
+                                - qrl_training
+                                - plotting
+
+############################## Env Config #############################################
+env:                              Maze                    # specifiy env string              
+env_config:
+  game_mode:                      basic #basic # frozen_lake
+  state_encoding:                 integer #binary # onehot
+  #### Parameters for frozen_lake version ####
+  map_name:                       4x4
+  is_slippery:                    False
+  #### Parameters for basic version ####
+  legal_actions_type:             restricted # all
+  env_type:                       crawford #mueller_3x3 # mueller_3x3 #crawford #'mueller_3x3'
+  # - grid_search
+  # - string
+  # - [mueller_3x3, crawford] #, neumann_a, neumann_b]
+  P:    -1
+  A:    10
+  W:    -1
+  R:    1
+  n:    3
+  default_reward: -0.1
+
+
+############################## Alg Config #############################################
+algorithm_config:                                       # config for QRL training
+  k: 10.0
+  alpha: 0.1
+  gamma: 0.99
+  eps: 0.01
+  mode: grover
+  steps_per_epoch: 200
+
+
+############################## Eval Config #############################################
+evaluation:
+  set_seed:               True 
+  seed:                   42
+  ###########################################################################
+  plotting:
+    mode:                         auto 
+    y_axis:                       episode_reward_mean 
+    path:                         /home/users/kruse/quantum-computing/qrl/logs/qbm/2024-11-18--10-56-06_QRL_QBM
+  
