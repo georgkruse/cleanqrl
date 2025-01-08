@@ -10,7 +10,7 @@ import gymnasium as gym
 from gymnasium.spaces import Box, Discrete, MultiBinary, MultiDiscrete, Dict
 
 from circuits.postprocessing import *
-from circuits.quantum_circuits import vqc_switch
+from circuits.quantum_circuits import vqc_generator
 
 
 class QuantumPGModel(TorchModelV2, nn.Module, ABC):
@@ -18,14 +18,14 @@ class QuantumPGModel(TorchModelV2, nn.Module, ABC):
     Quantum Model for Policy Gradient.
     '''
 
-    def __init__(self, obs_space, action_space, num_actions, model_config, name):
+    def __init__(self, obs_space, action_space, num_actions, config, name):
         TorchModelV2.__init__(
-            self, obs_space, action_space, num_actions, model_config, name
+            self, obs_space, action_space, num_actions, config, name
         )
         nn.Module.__init__(self)
         self.counter = -3
         self.reset = True
-        self.config = model_config['custom_model_config']
+        self.config = config
         self.mode = self.config['mode']
         self.num_params = self.config['num_variational_params']
 
@@ -152,7 +152,7 @@ class QuantumPGModel(TorchModelV2, nn.Module, ABC):
                                 
             dev_actor = qml.device(self.config['backend_name'], wires=self.num_qubits)
 
-            self.qnode_actor = qml.QNode(vqc_switch[self.config['vqc_type'][0]], dev_actor, interface=self.config['interface'], diff_method=self.config['diff_method']) #, argnum=0)
+            self.qnode_actor = qml.QNode(vqc_generator, dev_actor, interface=self.config['interface'], diff_method=self.config['diff_method']) #, argnum=0)
 
             if self.use_classical_layer:
                 self.classical_layer_actor = nn.Linear(in_features=self.num_inputs, out_features=self.num_actions, dtype=torch.float32)
@@ -243,10 +243,10 @@ class QuantumPGModel(TorchModelV2, nn.Module, ABC):
                 else:
                     prob = self.qnode_actor(theta=state, weights=self._parameters, config=self.config, type='actor', activations=None, H=None)
                     # Higher Pennylane Version
-                    # if state.shape[0] == 1:
-                    #     prob = torch.hstack(prob)
-                    # else:
-                    #     prob = torch.stack(prob).T
+                    if state.shape[0] == 1:
+                        prob = torch.hstack(prob)
+                    else:
+                        prob = torch.stack(prob).T
 
             if isinstance(self.action_space, MultiDiscrete):
                 

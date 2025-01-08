@@ -147,7 +147,7 @@ class QBM(tune.Trainable):
 
 	def setup(self, config: dict):
 
-		self.config = config['model']['custom_model_config']
+		self.config = config['alg_config']
 		self.env = wrapper_switch[config['env_config']['env']](config['env_config'])
 
 	# def __init__(self, config: dict):

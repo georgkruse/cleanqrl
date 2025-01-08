@@ -1,7 +1,7 @@
 import torch
 import pennylane as qml
 
-from circuits.graph.graph_circuits import graph_encoding_block
+# from circuits.graph.graph_circuits import graph_encoding_block
 
 def encoding_block(config, theta, weights, layer, type=None):
     '''

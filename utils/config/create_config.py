@@ -8,15 +8,7 @@ from utils.config.common import add_hyperparameters
 from utils.config.create_env import create_env
 
 def create_config(config, env_config):
-
-    # keys to lower-case for case insensitivity and improved fault tolerance
-    config_switch = {k.lower(): v for k, v in config_switch.items()}
-
-    if config.alg.lower() not in config_switch:
-        err_msg = "There does not exist any default configuration for provided ray algorithm %s" \
-                " check whether it is a custom algorithm".format(config.alg)
-        raise ValueError(err_msg)
-    
+   
     create_env(config)
 
     tune_config = {}

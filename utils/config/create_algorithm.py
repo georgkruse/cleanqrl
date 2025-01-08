@@ -5,7 +5,7 @@ from agents.aa_agent import Grover_agent
 
 qrl_switch = {
               'QPG':    QPG, 
-              'QDQN+':  QDQN, 
+              'QDQN':  QDQN, 
               'QBM':    QBM, 
               'Grover': Grover_agent
               }

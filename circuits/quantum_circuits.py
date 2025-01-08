@@ -4,8 +4,8 @@ from circuits.entangling_block import entangling_block
 from circuits.variational_block import variational_block
 from circuits.measurement import measurement
 
-from circuits.pooling.pooling_circuits import *
-from circuits.qcnn.qcnn_circuits import *
+# from circuits.pooling.pooling_circuits import *
+# from circuits.qcnn.qcnn_circuits import *
 
 entangling_gates = {'CZ': qml.CZ, 'CNOT': qml.CNOT, 'CH': qml.Hadamard}
 
@@ -51,22 +51,3 @@ def vqc_generator(weights, theta, config, type, activations, H):
 
     return measurement(config, type, H)   
     
-vqc_switch = {
-    'vqc_generator':            vqc_generator,
-    'vqc_triple':               vqc_generator,
-    'vqc_double':               vqc_generator,
-    'vqc_lunar_short':          vqc_generator,
-    'noisy_vqc':                vqc_generator,
-    'qcnn_pendulum_01':         qcnn_pendulum_01,
-    'pooling_pendulum_double':  pooling_pendulum_double,
-    'pooling_pendulum_triple':  pooling_pendulum_triple,
-    'qcnn_pendulum_double':     qcnn_pendulum_double,
-    'qcnn_pendulum_triple':     qcnn_pendulum_triple,
-    'pooling_lunar_01':         pooling_lunar_01,
-    'pooling_lunar_02':         pooling_lunar_02,
-    'qcnn_lunar_01':            qcnn_lunar_01,
-    'qcnn_lunar_02':            qcnn_lunar_02,
-    'qcnn_lunar_03':            qcnn_lunar_03,
-    'qcnn_lunar_short':         qcnn_lunar_short,
-    'special_unitary':          special_unitary,
-}

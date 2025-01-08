@@ -40,13 +40,13 @@ class QPG(tune.Trainable):
     def setup(self, config: dict):
       
         from utils.config.create_env import wrapper_switch
-        self.config = config['model']['custom_model_config']
+        self.config = config['alg_config']
         self.env = wrapper_switch[config['env_config']['env']](config['env_config'])
         # self.env = FrozenLake_Wrapper(config['env_config'])
 
-        self.model = QuantumPGModel(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['model'], 'name')
-        self.target_network = QuantumPGModel(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['model'], 'name')
-        self.target_network.load_state_dict(self.model.state_dict())
+        self.model = QuantumPGModel(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['alg_config'], 'model ')
+        # self.target_network = QuantumPGModel(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['model'], 'name')
+        # self.target_network.load_state_dict(self.model.state_dict())
 
         self.optimizer = self.create_optimizer()[0]
         self.schedulder = LinearLR(self.optimizer, start_factor=1.0, end_factor=1e-3, total_iters=5)

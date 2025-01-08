@@ -4,11 +4,11 @@ seed:                             42                    # seed for ray alogorith
 constant_seed:                    False                 # setting the same seed accross all runs
 checkpoint_at_end:                False                  # create checkpoint at the end of training
 checkpoint_freq:                  5000                  # set checkpoint frequency, depends on training iterations
-ray_local_mode:                   False                 # set local_mode of ray to True for debugging
+ray_local_mode:                   True                 # set local_mode of ray to True for debugging
 ray_logging_path:                 logs/paper/binary/3x3/qbm         # logging directory
 total_num_cpus:                   20                    # total number of cpus
 total_num_gpus:                   0                     # total number of gpus
-ray_num_trial_samples:            10                     # number of training seeds per combination
+ray_num_trial_samples:            1                     # number of training seeds per combination
 training_iterations:              50                    # number of training iterations
 run_sections:                                           # specify the sections ['qrl_training' and 'plotting']
                                 - qrl_training

@@ -1,5 +1,5 @@
 type:                             QRL                   # choose a type: RL, GA, Hypernetwork (DEPRECATED)
-alg:                              QPG+                  # name of the algorithm
+alg:                              QPG                   # name of the algorithm
 seed:                             42                    # seed for ray alogorithms/tensorflow/pytorch for reproduceabel results
 constant_seed:                    False                 # setting the same seed accross all runs
 checkpoint_at_end:                True                  # create checkpoint at the end of training

@@ -8,21 +8,21 @@ from torch.nn import functional as F
 from typing import Any, Dict, List, Tuple, Type, Union
 
 from circuits.postprocessing import *
-from circuits.quantum_circuits import vqc_switch
+from circuits.quantum_circuits import vqc_generator
 
 import gymnasium as gym
 from gymnasium.spaces import Box, Discrete, MultiBinary, MultiDiscrete, Dict
 
         
 class QuantumDQN_Model(TorchModelV2,nn.Module,ABC):
-    def __init__(self,obs_space,action_space,num_actions,model_config,name):
+    def __init__(self,obs_space,action_space,num_actions,config,name):
         TorchModelV2.__init__(
-            self, obs_space,action_space,num_actions,model_config,name
+            self, obs_space,action_space,num_actions,config,name
         )
         nn.Module.__init__(self)
         self.counter = -3
         self.reset = True
-        self.config = model_config['custom_model_config']
+        self.config = config
         self.mode = self.config['mode']
         self.num_params = self.config['num_variational_params']
 
@@ -134,7 +134,7 @@ class QuantumDQN_Model(TorchModelV2,nn.Module,ABC):
                                 
             dev_actor = qml.device(self.config['backend_name'], wires=self.num_qubits)
 
-            self.qnode_actor = qml.QNode(vqc_switch[self.config['vqc_type'][0]], dev_actor, interface=self.config['interface'], diff_method=self.config['diff_method']) #, argnum=0)
+            self.qnode_actor = qml.QNode(vqc_generator, dev_actor, interface=self.config['interface'], diff_method=self.config['diff_method']) #, argnum=0)
 
             if self.use_classical_layer:
                 self.classical_layer_actor = nn.Linear(in_features=self.num_inputs, out_features=self.num_actions, dtype=torch.float32)
@@ -203,10 +203,10 @@ class QuantumDQN_Model(TorchModelV2,nn.Module,ABC):
             else:
                 q_values = self.qnode_actor(theta=state, weights=self._parameters, config=self.config, type='actor', activations=None, H=None)
                 # Higher Pennylane Version
-                # if state.shape[0] == 1:
-                #     q_values = torch.hstack(q_values)
-                # else:
-                #     q_values = torch.stack(q_values).T
+                if state.shape[0] == 1:
+                    q_values = torch.hstack(q_values)
+                else:
+                    q_values = torch.stack(q_values).T
             if self.use_output_scaling_actor:
                 logits = torch.reshape(postprocessing(q_values, self.config, self.num_outputs, self._parameters, 'actor'), (-1, self.num_outputs))
             else:

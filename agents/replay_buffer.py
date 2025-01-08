@@ -112,7 +112,7 @@ class ReplayBuffer(object):
             data = self._storage[i]
             obs_t, action, reward, obs_tp1, done = data
             obses_t.append(obs_t)
-            actions.append(np.array(action, copy=False))
+            actions.append(np.array(action))
             rewards.append(reward)
             obses_tp1.append(obs_tp1)
             dones.append(done)
@@ -236,7 +236,7 @@ class ReplayBufferQBM(object):
             data = self._storage[i]
             obs_t, action, reward, obs_tp1, done, free_energy, samples, visible_nodes = data
             obses_t.append(obs_t)
-            actions.append(np.array(action, copy=False))
+            actions.append(np.array(action))
             rewards.append(reward)
             obses_tp1.append(obs_tp1)
             dones.append(done)

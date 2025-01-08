@@ -1,7 +1,6 @@
 import gymnasium as gym
 import numpy as np
 from gymnasium.spaces import Box, Discrete, MultiDiscrete
-from gymnasium.wrappers import EnvCompatibility
 
 class LunarLander_Wrapper(gym.Env):
     def __init__(self, env_config):

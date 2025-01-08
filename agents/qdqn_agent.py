@@ -91,12 +91,12 @@ class QDQN(tune.Trainable):
     def setup(self, config: dict):
       
         from utils.config.create_env import wrapper_switch
-        self.config = config['model']['custom_model_config']
+        self.config = config['alg_config']
         self.env = wrapper_switch[config['env_config']['env']](config['env_config'])
         # self.env = FrozenLake_Wrapper(config['env_config'])
 
-        self.model = QuantumDQN_Model(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['model'], 'name')
-        self.target_network = QuantumDQN_Model(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['model'], 'name')
+        self.model = QuantumDQN_Model(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['alg_config'], 'online_netork')
+        self.target_network = QuantumDQN_Model(self.env.observation_space, self.env.action_space, self.env.action_space.n, config['alg_config'], 'target_network')
         self.target_network.load_state_dict(self.model.state_dict())
 
         self.optimizer = self.create_optimizer()[0]

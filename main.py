@@ -10,13 +10,12 @@ import shutil
 from ray import tune, air 
 from utils.config.create_algorithm import create_algorithm
 from utils.config.create_config import create_config as crt_cfg
-from utils.plotting import plotting
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="This is the runfile for the open source baseline repo.")
-    parser.add_argument("--path", default= "configs/qbm/qbm_maze3x5.yml", 
+    parser.add_argument("--path", default= "configs/qpg/qpg_maze3x3.yml", 
                         metavar="FILE", help="path to alg config file", type=str)
     parser.add_argument("--test", default='None', type=str)
     args = parser.parse_args()
@@ -69,8 +68,8 @@ if __name__ == "__main__":
                                         trial_dirname_creator=trial_name_creator),
             param_space=param_space,
             run_config=air.RunConfig(stop={"training_iteration": config.training_iterations},
-                                    local_dir=ray_path,
-                                    # storage_path=ray_path,
+                                    # local_dir=ray_path,
+                                    storage_path=ray_path,
                                     name=name,
                                     checkpoint_config=air.CheckpointConfig(checkpoint_frequency=config.checkpoint_freq, 
                                                                             checkpoint_at_end=config.checkpoint_at_end)), 

@@ -1,7 +1,4 @@
-import torch
-import numpy as np
 import pennylane as qml
-import torch
 
 
 entangling_gates = {'CZ': qml.CZ, 'CNOT': qml.CNOT, 'CH': qml.Hadamard}
