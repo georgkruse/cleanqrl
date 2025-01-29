@@ -1,0 +1,37 @@
+ray_local_mode: False
+num_cpus:       24
+num_gpus:       0
+method:         QRL
+ray_logging_path: logs/QRL
+ray_num_trial_samples:  5
+type:                   train
+cpus_per_worker:        4
+gpus_per_worker:        0
+
+algorithm_config:
+  env_id:   "CartPole-v0"
+
+
+  algo:               REINFORCE
+  total_timesteps:    50000
+  learning_rate:      0.001    # only if model is classical
+  lr_input_scaling:   0.025
+  lr_variational:     0.0025
+  lr_output_scaling:  0.1
+  num_envs:           1
+  gamma:              0.99
+  
+
+  cuda: False
+
+  classical:    False
+  num_qubits:   4
+  num_layers:   5
+  observables:  local  # local or global
+  ansatz:       hwe
+  init_method:  #uniform
+    - grid_search
+    - string
+    - [uniform, small_random, reduced_domain]
+  device:       lightning.qubit
+  diff_method:  adjoint

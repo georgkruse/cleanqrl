@@ -1,0 +1,24 @@
+#!/bin/bash
+
+#PBS -o cluster/dqn_16_global_uniform.out
+#PBS -e cluster/dqn_16_global_uniform.err
+#PBS -l nodes=1:ppn=24
+#PBS -l walltime=10000:00:00
+
+export PATH=/home/data/anaconda3/bin:$PATH
+
+#
+# o Export all my environment variables to the job
+#PBS -V
+#
+
+source ~/.bashrc
+
+cd /home/users/coelho/qrl_dynamic_circuits/
+
+if [ $(conda activate qrl; echo $?) -eq 1 ]; then conda env create -f environment.yml; fi
+conda activate qrl
+
+
+python main.py --config configs/02_12/global_uniform_16.yaml
+# qsub -q iisb -m "abe" -M "rodrigo.coelho@iisb.fraunhofer.de" cluster/qrl.job

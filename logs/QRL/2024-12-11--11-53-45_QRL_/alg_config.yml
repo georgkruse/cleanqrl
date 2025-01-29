@@ -1,0 +1,40 @@
+ray_local_mode: False
+num_cpus:       3
+num_gpus:       0
+method:         QRL
+ray_logging_path: logs/QRL
+ray_num_trial_samples:  1
+type:                   train
+cpus_per_worker:        3
+gpus_per_worker:        0
+
+algorithm_config:
+  env_id:   "CartPole-v0"
+
+
+  algo:               DQN
+  total_timesteps:    50000
+  learning_rate:      0.001    # only if model is classical
+  lr_input_scaling:   0.001
+  lr_variational:     0.001
+  lr_output_scaling:  0.1
+  num_envs:           1
+  buffer_size:        10000
+  gamma:              0.99
+  tau:                1.0
+  target_network_frequency:   5
+  batch_size:         16
+  start_e:            1
+  end_e:              0.01
+  exploration_fraction:   0.35
+  learning_starts:        100
+  train_frequency:        4
+  
+
+  cuda: False
+
+  num_qubits:   4
+  num_layers:   5
+  observables:  local  # local or global
+  ansatz:       hwe
+  init_method:  uniform
