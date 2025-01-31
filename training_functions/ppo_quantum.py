@@ -1,4 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+import ray
 import time
 import gymnasium as gym
 import numpy as np
@@ -6,9 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
-from quantum.model import QRLAgent
-import ray
-
+import pennylane as qml
 
 def make_env(env_id):
     def thunk():
@@ -19,42 +18,50 @@ def make_env(env_id):
     return thunk
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-
-class Agent(nn.Module):
-    def __init__(self, envs, config):
+class PPOAgentQuantum(nn.Module):
+    def __init__(self,envs,config):
         super().__init__()
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
-        )
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
-        )
+        self.num_features = np.array(envs.single_observation_space.shape).prod()
+        self.num_actions = envs.single_action_space.n
+        self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
+        self.ansatz = config["ansatz"]
+        self.dynamic_meas = config["dynamic_meas"]
+        self.wires = range(self.num_qubits)
 
-    def get_value(self, x):
-        return self.critic(x)
+        if self.ansatz == "hea":
+            self.register_parameter(name="input_scaling_critic", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
+            self.register_parameter(name="variational_critic", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
+        
+            self.register_parameter(name="input_scaling_actor", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
+            self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
+
+            self.register_parameter(name="output_scaling_critic", param = nn.Parameter(torch.ones(1), requires_grad=True))
+            self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
+        
+        self.measured_qubits = torch.randint(low = 0, high = self.num_qubits, size = (self.num_layers,2), requires_grad = False)
+
+        dev = qml.device("lightning.qubit", wires = self.wires)
+        if self.ansatz == "hwe":
+            if self.dynamic_meas:
+                self.qc = qml.QNode(ansatz_hwe, dev,mcm_method="deferred", diff_method = "backprop", interface = "torch")
+            else:
+                self.qc = qml.QNode(ansatz_hwe, dev, diff_method = "backprop", interface = "torch")
+        
+    def get_value(self,x):
+        return self._parameters["output_scaling_critic"] * self.qc(x, self._parameters["input_scaling_critic"], self._parameters["variational_critic"], self.wires, self.num_layers, "critic", self.dynamic_meas, self.measured_qubits)
 
     def get_action_and_value(self, x, action=None):
-        logits = self.actor(x)
-        probs = Categorical(logits=logits)
+        logits = self.qc(x, self._parameters["input_scaling_actor"], self._parameters["variational_actor"], self.wires, self.num_layers, "actor", self.dynamic_meas, self.measured_qubits)
+        logits = torch.stack((logits[0], logits[1]), dim=1)
+        logits_scaled = logits * self._parameters["output_scaling_actor"]
+        probs = Categorical(logits=logits_scaled)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+        return action, probs.log_prob(action), probs.entropy(), self._parameters["output_scaling_critic"] * self.qc(x, self._parameters["input_scaling_critic"], self._parameters["variational_critic"], self.wires, self.num_layers, "critic", self.dynamic_meas, self.measured_qubits)
 
 
-def PPO(config):
+def ppo_quantum(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
     num_minibatches = config["num_minibatches"]
@@ -92,7 +99,7 @@ def PPO(config):
 
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = QRLAgent(envs, config).to(device)  # This is what I need to change to fit quantum into the picture
+    agent = PPOAgentQuantum(envs, config).to(device)  # This is what I need to change to fit quantum into the picture
     #optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
 
     optimizer = optim.Adam([

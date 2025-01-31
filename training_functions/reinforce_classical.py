@@ -6,7 +6,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import ray
-from quantum.model import QRLAgentReinforce
 
 def make_env(env_id):
     def thunk():
@@ -25,7 +24,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
-class Agent(nn.Module):
+class ReinforceAgentClassical(nn.Module):
     def __init__(self, envs):
         super().__init__()
         self.actor = nn.Sequential(
@@ -42,15 +41,12 @@ class Agent(nn.Module):
         action = probs.sample()
         return action, probs.log_prob(action)
 
-def reinforce(config):
+def reinforce_classical(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
     learning_rate = config["learning_rate"]
     gamma = config["gamma"]
-    lr_input_scaling = config["lr_input_scaling"]
-    lr_variational = config["lr_variational"]
-    lr_output_scaling = config["lr_output_scaling"]
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
 
@@ -60,17 +56,9 @@ def reinforce(config):
 
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    if config["classical"]:
-        agent = Agent(envs).to(device)
-        optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
-    else:
-        agent = QRLAgentReinforce(envs, config).to(device)
-        optimizer = optim.Adam([
-            {"params": agent._parameters["input_scaling_actor"], "lr": lr_input_scaling},
-            {"params": agent._parameters["output_scaling_actor"], "lr": lr_output_scaling},
-            {"params": agent._parameters["variational_actor"], "lr": lr_input_scaling}
-        ])
-
+    # Here, the classical agent is initialized with a Neural Network
+    agent = ReinforceAgentClassical(envs).to(device)
+    optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
 
     global_step = 0
     start_time = time.time()

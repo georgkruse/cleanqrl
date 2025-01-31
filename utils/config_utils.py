@@ -1,6 +1,9 @@
 from ray.tune import choice, uniform, grid_search, loguniform
 
-switch = {'choice': choice, 'uniform': uniform, 'grid_search': grid_search, 'loguniform': loguniform}
+switch = {'choice': choice, 
+          'uniform': uniform, 
+          'grid_search': grid_search, 
+          'loguniform': loguniform}
 
 def add_hyperparameters(conf):
     for key, _ in conf.items():

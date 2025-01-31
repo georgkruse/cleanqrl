@@ -1,5 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
-import os
+import ray
 import random
 import time
 import gymnasium as gym
@@ -8,10 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from stable_baselines3.common.buffers import ReplayBuffer
-from quantum.model import QRLAgentDQN
-import ray
-
+import pennylane as qml
 
 def make_env(env_id):
     def thunk():
@@ -26,29 +23,61 @@ class ContinuousEncoding(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
 
+def calculate_a(a,S,L):
+    left_side = np.sin(2 * a * np.pi) / (2 * a * np.pi)
+    right_side = (S * (2 * L - 1) - 2) / (S * (2 * L + 1))
+    return left_side - right_side
 
-# ALGO LOGIC: initialize agent here:
-class QNetwork(nn.Module):
-    def __init__(self, env):
+class QRLAgentDQN(nn.Module):
+    def __init__(self,envs,config):
         super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
-            nn.ReLU(),
-            nn.Linear(120, 84),
-            nn.ReLU(),
-            nn.Linear(84, env.single_action_space.n),
-        )
+        self.config = config
+        self.num_features = np.array(envs.single_observation_space.shape).prod()
+        self.num_actions = envs.single_action_space.n
+        self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
+        self.ansatz = config["ansatz"]
+        self.init_method = config["init_method"]
+        self.observables = config["observables"]
+        if self.observables == "global":
+            self.S = self.num_qubits
+        elif self.observables == "local":
+            self.S = self.num_qubits // 2
+        self.wires = range(self.num_qubits)
 
+        if self.ansatz == "hea":
+            # Input and Output Scaling weights are always initialized as 1s        
+            self.register_parameter(name="input_scaling_actor", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
+            self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
+
+            # The variational weights are initialized differently according to the config file
+            if self.init_method == "uniform":
+                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi, requires_grad=True))
+            elif self.init_method == "small_random":
+                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 0.2 - 0.1, requires_grad=True))
+            elif self.init_method == "reduced_domain":
+                initial_guess = 0.1
+                alpha = fsolve(lambda a: calculate_a(a,self.S,self.num_layers), initial_guess)
+                self.register_parameter(name="variational_actor", param = nn.Parameter((torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi) * alpha, requires_grad=True))    
+        
+        dev = qml.device(config["device"], wires = self.wires)
+        if self.ansatz == "hwe":
+            self.qc = qml.QNode(ansatz_hwe, dev, diff_method = config["diff_method"], interface = "torch")
+        
     def forward(self, x):
-        return self.network(x)
-
+        x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
+        logits = self.qc(x, self._parameters["input_scaling_actor"], self._parameters["variational_actor"], self.wires, self.num_layers, "actor", self.observables)
+        if self.config["diff_method"] == "backprop" or x.shape[0] == 1:
+            logits = logits.reshape(x.shape[0], self.num_actions)
+        logits_scaled = logits * self._parameters["output_scaling_actor"]
+        return logits_scaled
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
 
 
-def DQN(config):
+def dqn_quantum(config):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
