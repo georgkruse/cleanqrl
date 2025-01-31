@@ -7,13 +7,13 @@ import datetime
 import shutil
 from ray import tune
 from utils.config_utils import create_config
-from training_functions.train import train
+from training_functions.train import train_agent
 from training_functions.get_gradients import get_gradients
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = "This parser receives the yaml config file")
-    parser.add_argument("--config", default = "configs/11_12/reinforce_4.yaml")
+    parser.add_argument("--config", default = "configs/11_12/dqn_4.yaml")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -37,10 +37,10 @@ if __name__ == "__main__":
     shutil.copy(args.config, path + '/alg_config.yml')
 
     def trial_name_creator(trial):
-            return trial.__str__() + '_' + trial.experiment_tag + ','
+        return trial.__str__() + '_' + trial.experiment_tag + ','
     
     if config.type == "train":
-        trainable = tune.with_resources(train, {"cpu": config.cpus_per_worker, "gpu": config.gpus_per_worker})
+        trainable = tune.with_resources(train_agent, {"cpu": config.cpus_per_worker, "gpu": config.gpus_per_worker})
     elif config.type == "BP":
          trainable = tune.with_resources(get_gradients, {"cpu": config.cpus_per_worker, "gpu": config.gpus_per_worker})
 

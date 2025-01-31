@@ -4,7 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import pennylane as qml
 import time
-from quantum.circuits import ansatz_hwe
+from quantum.hea import ansatz_hwe
 
 class QAgent(nn.Module):
     def __init__(self):

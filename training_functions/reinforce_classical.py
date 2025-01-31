@@ -81,21 +81,10 @@ def reinforce_classical(config):
             rewards.append(reward)
             obs = torch.Tensor(obs).to(device)
             done = np.any(terminations) or np.any(truncations)
+        
+        global_episodes +=1
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        global_episodes +=1
-                        episode_returns.append(info["episode"]["r"][0])
-                        global_step_returns.append(global_step)
-                        metrics = {
-                            "episodic_return": info["episode"]["r"][0],
-                            "global_step": global_step,
-                            "episode": global_episodes
-                        }
-
-                        ray.train.report(metrics = metrics)
-
+        # Not sure about this?
         global_step += len(rewards) * num_envs
 
         print("SPS:", int(global_step / (time.time() - start_time)))
@@ -119,6 +108,14 @@ def reinforce_classical(config):
         loss.backward()
         optimizer.step()
 
-        print(f"Global step: {global_step}, Return: {sum(rewards)}")
+        metrics = {
+            "episodic_return": infos["episode"]["r"][0],
+            "global_step": global_step,
+            "episode": global_episodes,
+            "loss": loss.item()
+        }
+        ray.train.report(metrics = metrics)
+
+        print(f"Global step: {global_step}, Return: {sum(rewards)}, Loss: {loss.item()}")
 
     envs.close()

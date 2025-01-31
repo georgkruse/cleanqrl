@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-
+from training_functions.replay_buffer import ReplayBuffer
 
 def make_env(env_id):
     def thunk():
@@ -103,36 +103,30 @@ def dqn_classical(config):
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if info and "episode" in info:
-                    global_episodes +=1
-                    episode_returns.append(info["episode"]["r"][0])
-                    global_step_returns.append(global_step)
-                    metrics = {
-                        "episodic_return": info["episode"]["r"][0],
-                        "global_step": global_step,
-                        "episode": global_episodes
-                    }
 
-                    ray.train.report(metrics = metrics)
+        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        real_next_obs = next_obs.copy()
+        # Dont know about this as well?
+        # for idx, trunc in enumerate(truncations):
+            # if trunc:
+            #     real_next_obs[idx] = infos["final_observation"][idx]
+        rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+
+        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+        obs = next_obs
+
+        metrics = {"global_step": global_step}
+        if infos and "episode" in infos:
+            global_episodes += 1
+            metrics["episodic_return"] = infos["episode"]["r"][0]
+            metrics["episode"] = global_episodes
+            episode_returns.append(infos["episode"]["r"][0])
+            
 
 
         if global_episodes >= 100:
             if global_step % 1000 == 0:
                 print(np.mean(episode_returns[-10:]))
-
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
-        real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
-        rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
-
-        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        obs = next_obs
 
         # ALGO LOGIC: training.
         if global_step > learning_starts:
@@ -159,4 +153,8 @@ def dqn_classical(config):
                         tau * q_network_param.data + (1.0 - tau) * target_network_param.data
                     )
 
+            metrics["loss"] = loss.item()
+
+        if (global_step > learning_starts and global_step % train_frequency == 0) or "episode" in infos:
+            ray.train.report(metrics=metrics)
     envs.close()

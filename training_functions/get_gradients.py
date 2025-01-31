@@ -1,5 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
-import os
+import ray
 import random
 import time
 import gymnasium as gym
@@ -8,10 +8,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from stable_baselines3.common.buffers import ReplayBuffer
-from quantum.model import QRLAgentDQN
-import ray
-
 
 def make_env(env_id):
     def thunk():

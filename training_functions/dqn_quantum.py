@@ -106,18 +106,14 @@ def dqn_quantum(config):
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
     assert num_envs == 1, "environment vectorization not possible in DQN"
 
-    if config["classical"]:
-        q_network = QNetwork(envs).to(device)
-        optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
-        target_network = QNetwork(envs).to(device)
-    else:
-        q_network = QRLAgentDQN(envs, config).to(device)
-        optimizer = optim.Adam([
-            {"params": q_network._parameters["input_scaling_actor"], "lr": lr_input_scaling},
-            {"params": q_network._parameters["output_scaling_actor"], "lr": lr_output_scaling},
-            {"params": q_network._parameters["variational_actor"], "lr": lr_variational}
-        ])
-        target_network = QRLAgentDQN(envs, config).to(device)
+
+    q_network = DQNAgentQuantum(envs, config).to(device)
+    optimizer = optim.Adam([
+        {"params": q_network._parameters["input_scaling_actor"], "lr": lr_input_scaling},
+        {"params": q_network._parameters["output_scaling_actor"], "lr": lr_output_scaling},
+        {"params": q_network._parameters["variational_actor"], "lr": lr_variational}
+    ])
+    target_network = QRLAgentDQN(envs, config).to(device)
 
     target_network.load_state_dict(q_network.state_dict())
 
