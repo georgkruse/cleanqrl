@@ -1,57 +1,40 @@
-import argparse
-import yaml
-from collections import namedtuple
-import ray
 import os
+import yaml
 import datetime
 import shutil
-from ray import tune
-from utils.config_utils import create_config
-from training_functions.train import train_agent
-from training_functions.get_gradients import get_gradients
+from utils.config_utils import generate_config
+from utils.train_utils import train_agent
+from utils.plotting_utils import plot_single_run
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description = "This parser receives the yaml config file")
-    parser.add_argument("--config", default = "configs/11_12/dqn_4.yaml")
-    args = parser.parse_args()
 
-    with open(args.config) as f:
-        data = yaml.load(f, Loader = yaml.FullLoader)
-    config = namedtuple("ObjectName", data.keys())(*data.values())
-    path = None
+    # Specify the path to the config file
+    config_path = 'configs/dqn_default.yaml'
 
-    ray.init(local_mode = config.ray_local_mode,
-             num_cpus = config.num_cpus,
-             num_gpus=config.num_gpus,
-             _temp_dir=os.path.dirname(os.path.dirname(os.getcwd())) + '/coelho/' + 'ray_logs',
-             include_dashboard = False)
+    # Load the config file 
+    with open(config_path) as f:
+        config = yaml.load(f, Loader = yaml.FullLoader)
+
+    # Generate the parameter space for the experiment from the config file
+    parameter_config = generate_config(config['algorithm_config'])
+    tune_config = config['tune_config']
     
-    param_space = create_config(config)
-    
-    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config.method + '_'
-    ray_path = os.getcwd() + '/' + config.ray_logging_path
-    path = ray_path + "/" + name
+    # Based on the current time, create a unique name for the experiment
+    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + tune_config['trial_name']
+    path = os.path.join(os.getcwd(), tune_config['trial_path'], name)
+    parameter_config['path'] = path
 
+    # Create the directory and save a copy of the config file so 
+    # that the experiment can be replicated
     os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
-    shutil.copy(args.config, path + '/alg_config.yml')
+    shutil.copy(config_path, path + '/config.yml')
 
-    def trial_name_creator(trial):
-        return trial.__str__() + '_' + trial.experiment_tag + ','
-    
-    if config.type == "train":
-        trainable = tune.with_resources(train_agent, {"cpu": config.cpus_per_worker, "gpu": config.gpus_per_worker})
-    elif config.type == "BP":
-         trainable = tune.with_resources(get_gradients, {"cpu": config.cpus_per_worker, "gpu": config.gpus_per_worker})
+    # Start the agent training 
+    train_agent(parameter_config)
+    # Plot the results of the training
+    plot_single_run(path)
 
-    tuner = tune.Tuner(
-            trainable,
-            tune_config=tune.TuneConfig(num_samples=config.ray_num_trial_samples,
-                                        trial_dirname_creator=trial_name_creator),
-            param_space=param_space,)
-        
-    tuner.fit()
-    ray.shutdown()
 
 
 

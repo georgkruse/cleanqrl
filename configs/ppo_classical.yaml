@@ -1,0 +1,34 @@
+tune_config:  
+  trial_path: logs
+  trial_name:  ppo_cartpole
+  ray_local_mode: False
+  num_cpus:       32
+  num_gpus:       0
+  method:         RL
+  ray_num_trial_samples:  1
+  cpus_per_worker:        16
+  gpus_per_worker:        0
+
+algorithm_config:
+  env_id:   "CartPole-v1"
+  agent:               PPO
+  total_timesteps:    1000
+  learning_rate:      0.001    # only if model is classical
+  num_envs:           1
+  num_steps:          128
+  anneal_lr:          True
+  gamma:              0.99
+  gae_lambda:         0.95
+  num_minibatches:    4
+  update_epochs:      4
+  norm_adv:           True
+  clip_coef:          0.2
+  clip_vloss:         True
+  ent_coef:           0.01
+  vf_coef:            0.5
+  max_grad_norm:      0.5
+  target_kl:          None
+  cuda: False
+
+
+

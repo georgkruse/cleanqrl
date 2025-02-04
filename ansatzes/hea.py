@@ -1,7 +1,7 @@
 import pennylane as qml
 import torch
 
-def layer_hwe(x, input_scaling_params, rotational_params, wires):
+def layer_hea(x, input_scaling_params, rotational_params, wires):
     """
     x: input (batch_size,num_features)
     input_scaling_params: vector of parameters (num_features)
@@ -22,9 +22,9 @@ def layer_hwe(x, input_scaling_params, rotational_params, wires):
         qml.broadcast(unitary=qml.CZ, pattern = "ring", wires = wires)
 
 
-def ansatz_hwe(x, input_scaling_weights,variational_weights, wires, layers, type_, observables = "None"):
+def hea(x, input_scaling_weights,variational_weights, wires, layers, type_, observables = "None"):
     for layer in range(layers):
-        layer_hwe(x, input_scaling_weights[layer], variational_weights[layer], wires)
+        layer_hea(x, input_scaling_weights[layer], variational_weights[layer], wires)
     if type_ == "critic":
         return qml.expval(qml.PauliZ(0))
     elif type_ == "actor":

@@ -8,6 +8,8 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import pennylane as qml
 
+from ansatz.hea import hea
+
 def make_env(env_id):
     def thunk():
         env = gym.make(env_id)
@@ -58,12 +60,19 @@ class ReinforceAgentQuantum(nn.Module):
                 self.register_parameter(name="variational_actor", param = nn.Parameter((torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi) * alpha, requires_grad=True))    
         
         dev = qml.device(config["device"], wires = self.wires)
-        if self.ansatz == "hwe":
-            self.qc = qml.QNode(ansatz_hwe, dev, diff_method = config["diff_method"], interface = "torch")
+        if self.ansatz == "hea":
+            self.qc = qml.QNode(hea, dev, diff_method = config["diff_method"], interface = "torch")
         
     def get_action_and_logprob(self, x):
         x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
-        logits = self.qc(x, self._parameters["input_scaling_actor"], self._parameters["variational_actor"], self.wires, self.num_layers, "actor", self.observables)
+        logits = self.qc(x, 
+                         self._parameters["input_scaling_actor"], 
+                         self._parameters["variational_actor"], 
+                         self.wires, 
+                         self.num_layers, 
+                         "actor", 
+                         self.observables)
+        
         if self.config["diff_method"] == "backprop" or x.shape[0] == 1:
             logits = logits.reshape(x.shape[0], self.num_actions)
         logits_scaled = logits * self._parameters["output_scaling_actor"]
@@ -72,12 +81,10 @@ class ReinforceAgentQuantum(nn.Module):
         return action, probs.log_prob(action)
 
 
-
 def reinforce_quantum(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
-    learning_rate = config["learning_rate"]
     gamma = config["gamma"]
     lr_input_scaling = config["lr_input_scaling"]
     lr_variational = config["lr_variational"]
@@ -122,19 +129,7 @@ def reinforce_quantum(config):
             obs = torch.Tensor(obs).to(device)
             done = np.any(terminations) or np.any(truncations)
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        global_episodes +=1
-                        episode_returns.append(info["episode"]["r"][0])
-                        global_step_returns.append(global_step)
-                        metrics = {
-                            "episodic_return": info["episode"]["r"][0],
-                            "global_step": global_step,
-                            "episode": global_episodes
-                        }
-
-                        ray.train.report(metrics = metrics)
+        global_episodes +=1
 
         global_step += len(rewards) * num_envs
 
@@ -159,6 +154,14 @@ def reinforce_quantum(config):
         loss.backward()
         optimizer.step()
 
-        print(f"Global step: {global_step}, Return: {sum(rewards)}")
+        metrics = {
+            "episodic_return": infos["episode"]["r"][0],
+            "global_step": global_step,
+            "episode": global_episodes,
+            "loss": loss.item()
+        }
+        ray.train.report(metrics = metrics)
+
+        print(f"Global step: {global_step}, Return: {sum(rewards)}, Loss: {loss.item()}")
 
     envs.close()

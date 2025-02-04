@@ -3,19 +3,26 @@ import numpy as np
 from gymnasium import spaces
 
 class MultiArmedBanditEnv(gym.Env):
-    def __init__(self, n_arms=10, reward_probabilities=None):
+    def __init__(self, config):
         super(MultiArmedBanditEnv, self).__init__()
-        self.n_arms = n_arms
-        
+
+        if hasattr(config, 'n_arms'):
+            self.n_arms = config['n_arms']
+        else:
+            self.n_arms = 10
+        if hasattr(config, 'reward_probabilities'):
+            reward_probabilities = config['reward_probabilities']
+        else:
+            reward_probabilities = None
         # Define action and observation space
-        self.action_space = spaces.Discrete(n_arms)
+        self.action_space = spaces.Discrete(self.n_arms)
         self.observation_space = spaces.Discrete(1)  # No observation, only action selection
         
         # Define reward probabilities for each arm
         if reward_probabilities is None:
-            self.reward_probabilities = np.random.rand(n_arms)
+            self.reward_probabilities = np.random.rand(self.n_arms)
         else:
-            assert len(reward_probabilities) == n_arms
+            assert len(reward_probabilities) == self.n_arms
             self.reward_probabilities = reward_probabilities
         
     def reset(self):
