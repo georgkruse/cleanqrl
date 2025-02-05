@@ -1,5 +1,7 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
+# This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
+import os
 import ray
+import json
 import random
 import time
 import gymnasium as gym
@@ -10,18 +12,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 import pennylane as qml
 
-def make_env(env_id):
-    def thunk():
-        env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = ContinuousEncoding(env)
-        return env
+from agents.replay_buffer import ReplayBuffer
+from ansatzes.hea import hea
+from utils.env_utils import make_env
 
-    return thunk
-
-class ContinuousEncoding(gym.ObservationWrapper):
-    def observation(self, obs):
-        return np.arctan(obs)
 
 def calculate_a(a,S,L):
     left_side = np.sin(2 * a * np.pi) / (2 * a * np.pi)
@@ -81,7 +75,6 @@ def dqn_quantum(config):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
-    learning_rate = config["learning_rate"]
     buffer_size = config["buffer_size"]
     total_timesteps = config["total_timesteps"]
     start_e = config["start_e"]
@@ -96,6 +89,11 @@ def dqn_quantum(config):
     lr_input_scaling = config["lr_input_scaling"]
     lr_variational = config["lr_variational"]
     lr_output_scaling = config["lr_output_scaling"]
+
+    if not ray.is_initialized():
+        report_path = os.path.join(config["path"], "result.json")
+        with open(report_path, "w") as f:
+            f.write("")
 
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
@@ -126,7 +124,11 @@ def dqn_quantum(config):
     )
     start_time = time.time()
 
+    # global parameters to log
+    global_step = 0
     global_episodes = 0
+    global_circuit_executions = 0
+    steps_per_eposide = 0
     episode_returns = []
     global_step_returns = []
 

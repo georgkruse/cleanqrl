@@ -1,5 +1,7 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+# This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+import os
 import ray
+import json
 import time
 import gymnasium as gym
 import numpy as np
@@ -8,14 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
 
-def make_env(env_id):
-    def thunk():
-        env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        return env
-
-    return thunk
-
+from utils.env_utils import make_env
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -78,6 +73,11 @@ def ppo_classical(config):
     batch_size = int(num_envs * num_steps)
     minibatch_size = int(batch_size // num_minibatches)
     num_iterations = total_timesteps // batch_size
+    
+    if not ray.is_initialized():
+        report_path = os.path.join(config["path"], "result.json")
+        with open(report_path, "w") as f:
+            f.write("")
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
 

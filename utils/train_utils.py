@@ -16,4 +16,4 @@ agent_switch = {
 }
 
 def train_agent(config):
-    agent_switch[config["agent"]][config["agent_type"]](config)
+    agent_switch[config["agent"]](config)

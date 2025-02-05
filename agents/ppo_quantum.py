@@ -1,5 +1,7 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+# This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+import os
 import ray
+import json
 import time
 import gymnasium as gym
 import numpy as np
@@ -9,14 +11,8 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import pennylane as qml
 
-def make_env(env_id):
-    def thunk():
-        env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        return env
-
-    return thunk
-
+from ansatzes.hea import hea
+from utils.env_utils import make_env
 
 class PPOAgentQuantum(nn.Module):
     def __init__(self,envs,config):
@@ -91,6 +87,11 @@ def ppo_quantum(config):
     minibatch_size = int(batch_size // num_minibatches)
     num_iterations = total_timesteps // batch_size
 
+    if not ray.is_initialized():
+        report_path = os.path.join(config["path"], "result.json")
+        with open(report_path, "w") as f:
+            f.write("")
+
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
 
     envs = gym.vector.SyncVectorEnv(
@@ -118,12 +119,15 @@ def ppo_quantum(config):
     dones = torch.zeros((num_steps, num_envs)).to(device)
     values = torch.zeros((num_steps, num_envs)).to(device)
 
-    global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset()
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(num_envs).to(device)
+    # global parameters to log
+    global_step = 0
     global_episodes = 0
+    global_circuit_executions = 0
+    steps_per_eposide = 0
     episode_returns = []
     global_step_returns = []
 
@@ -161,8 +165,13 @@ def ppo_quantum(config):
                     "global_step": global_step,
                     "episode": global_episodes
                 }
-            
-                ray.train.report(metrics = metrics)
+                # This needs to be placed at the end to include loss loggings
+                if ray.is_initialized():
+                    ray.train.report(metrics=metrics)
+                else:
+                    with open(report_path, "a") as f:
+                        json.dump(metrics, f)
+                        f.write("\n")
 
             if global_episodes >= 100:
                 if global_step % 1000 == 0:

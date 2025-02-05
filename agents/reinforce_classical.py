@@ -1,3 +1,6 @@
+import os
+import ray
+import json
 import time
 import gymnasium as gym
 import numpy as np
@@ -5,19 +8,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
-import ray
 
-def make_env(env_id):
-    def thunk():
-        env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = ContinuousEncoding(env)
-        return env
-    return thunk
-
-class ContinuousEncoding(gym.ObservationWrapper):
-    def observation(self, obs):
-        return np.arctan(obs)
+from utils.env_utils import make_env
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -47,6 +39,11 @@ def reinforce_classical(config):
     env_id = config["env_id"]
     learning_rate = config["learning_rate"]
     gamma = config["gamma"]
+
+    if not ray.is_initialized():
+        report_path = os.path.join(config["path"], "result.json")
+        with open(report_path, "w") as f:
+            f.write("")
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
 
@@ -114,7 +111,12 @@ def reinforce_classical(config):
             "episode": global_episodes,
             "loss": loss.item()
         }
-        ray.train.report(metrics = metrics)
+        if ray.is_initialized():
+            ray.train.report(metrics=metrics)
+        else:
+            with open(report_path, "a") as f:
+                json.dump(metrics, f)
+                f.write("\n")
 
         print(f"Global step: {global_step}, Return: {sum(rewards)}, Loss: {loss.item()}")
 

@@ -12,7 +12,7 @@ algorithm_config:
   env_id:   "CartPole-v1"
 
 
-  agent:               DQN
+  agent:               DQN_classical
   total_timesteps:    1000
   learning_rate:      0.001
     # - grid_search
@@ -27,7 +27,7 @@ algorithm_config:
   start_e:            1
   end_e:              0.01
   exploration_fraction:   0.35
-  learning_starts:        1000
+  learning_starts:        100
   train_frequency:        1
   
 

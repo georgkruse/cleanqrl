@@ -1,5 +1,7 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
+# This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
+import os
 import ray
+import json
 import random
 import time
 import gymnasium as gym
@@ -8,21 +10,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from training_functions.replay_buffer import ReplayBuffer
 
-def make_env(env_id):
-    def thunk():
-        env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = ContinuousEncoding(env)
-        return env
-
-    return thunk
-
-class ContinuousEncoding(gym.ObservationWrapper):
-    def observation(self, obs):
-        return np.arctan(obs)
-
+from agents.replay_buffer import ReplayBuffer
+from utils.env_utils import make_env
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
@@ -45,7 +35,7 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
-def dqn_classical(config):
+def dqn_classical(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -61,6 +51,11 @@ def dqn_classical(config):
     gamma = config["gamma"]
     target_network_frequency = config["target_network_frequency"]
     tau = config["tau"]
+
+    if not ray.is_initialized():
+        report_path = os.path.join(config["path"], "result.json")
+        with open(report_path, "w") as f:
+            f.write("")
 
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
@@ -156,5 +151,10 @@ def dqn_classical(config):
             metrics["loss"] = loss.item()
 
         if (global_step > learning_starts and global_step % train_frequency == 0) or "episode" in infos:
-            ray.train.report(metrics=metrics)
+            if ray.is_initialized():
+                ray.train.report(metrics=metrics)
+            else:
+                with open(report_path, "a") as f:
+                    json.dump(metrics, f)
+                    f.write("\n")    
     envs.close()

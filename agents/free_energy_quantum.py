@@ -10,13 +10,12 @@ from copy import deepcopy
 import math
 from copy import deepcopy
 from ray import tune
-from neal import SimulatedAnnealingSampler
+# from neal import SimulatedAnnealingSampler
 # from dwave.system import DWaveSampler, EmbeddingComposite, FixedEmbeddingComposite
 from collections import defaultdict
 
 import yaml 
-from utils.config.create_env import wrapper_switch
-from agents.replay_buffer import ReplayBufferQBM
+# from agents.replay_buffer import ReplayBufferQBM
 
 from scipy.sparse import csr_matrix, kron, identity, diags
 from scipy.linalg import eigh
@@ -143,84 +142,82 @@ def execute_dwave(h, J, config, sampler, path, sample_index, embedding_path, lay
 	return sample_set
 
 
-class QBM(tune.Trainable):
+def free_energy_quantum(config: dict):
 
-	def setup(self, config: dict):
-
-		self.config = config['alg_config']
-		self.env = wrapper_switch[config['env_config']['env']](config['env_config'])
+	self.config = config['alg_config']
+	self.env = wrapper_switch[config['env_config']['env']](config['env_config'])
 
 	# def __init__(self, config: dict):
 
 	# 	self.config = config._asdict() #['model']['custom_model_config']
 	# 	self.env = wrapper_switch[self.config['env_config']['env']](self.config['env_config'])
 	# 	self.config = self.config['algorithm_config']
-		self.episodes_trained_total = 0
-		self.steps_trained_total = 0
-		self.global_step = 0        
-		self.circuit_executions = 0
-		# self.schedulder = LinearLR(self.optimizer, start_factor=1.0, end_factor=1e-3, total_iters=5)
-		self.steps_per_epoch = self.config['steps_per_epoch']
-		self.gamma = self.config['gamma']
+	self.episodes_trained_total = 0
+	self.steps_trained_total = 0
+	self.global_step = 0        
+	self.circuit_executions = 0
+	# self.schedulder = LinearLR(self.optimizer, start_factor=1.0, end_factor=1e-3, total_iters=5)
+	self.steps_per_epoch = self.config['steps_per_epoch']
+	self.gamma = self.config['gamma']
 
-		self.inital_epsilon = self.config['exploration_config']['initial_epsilon']
-		self.final_epsilon = self.config['exploration_config']['final_epsilon']
-		self.epsilon_timesteps = self.config['exploration_config']['epsilon_timesteps']
+	self.inital_epsilon = self.config['exploration_config']['initial_epsilon']
+	self.final_epsilon = self.config['exploration_config']['final_epsilon']
+	self.epsilon_timesteps = self.config['exploration_config']['epsilon_timesteps']
 
-		self.learning_starts = self.config['num_steps_sampled_before_learning_starts']
-		self.train_frequency = 10
-		self.train_batch_size = self.config['train_batch_size']
+	self.learning_starts = self.config['num_steps_sampled_before_learning_starts']
+	self.train_frequency = 10
+	self.train_batch_size = self.config['train_batch_size']
 
-		self.target_network_update_freq = self.config['target_network_update_freq']
-		self.tau = self.config['tau']
+	self.target_network_update_freq = self.config['target_network_update_freq']
+	self.tau = self.config['tau']
 
-		self.replay_buffer = ReplayBufferQBM(size=self.config['replay_buffer_config']['capacity'])
+	self.replay_buffer = ReplayBufferQBM(size=self.config['replay_buffer_config']['capacity'])
+
+	self.layers = self.config['layers']
+	self.total_qubits = int(sum(self.layers))
+	self.mean = self.config['mean']
+	self.variance = self.config['variance']
+
+	self.state_size = self.env.observation_space.shape[0]
+	self.action_size = self.env.action_space.n
 	
-		self.layers = self.config['layers']
-		self.total_qubits = int(sum(self.layers))
-		self.mean = self.config['mean']
-		self.variance = self.config['variance']
+	self.hamiltonian_type = self.config['hamiltonian_type']
+	self.sampler_type = self.config['sampler_type']
+	self.embedding_path = self.config['embedding_path']
+	self.big_gamma = self.config['big_gamma']
+	self.beta = self.config['beta']
+	self.lr = self.config['lr']
+	self.small_gamma = self.config['small_gamma']
+	self.eps = 1e-5
 
-		self.state_size = self.env.observation_space.shape[0]
-		self.action_size = self.env.action_space.n
-		
-		self.hamiltonian_type = self.config['hamiltonian_type']
-		self.sampler_type = self.config['sampler_type']
-		self.embedding_path = self.config['embedding_path']
-		self.big_gamma = self.config['big_gamma']
-		self.beta = self.config['beta']
-		self.lr = self.config['lr']
-		self.small_gamma = self.config['small_gamma']
-		self.eps = 1e-5
-
-		if 'H_(d+1)' in self.hamiltonian_type:
-			if self.hamiltonian_type[-2] == '_': 
-				self.num_replicas = int(self.hamiltonian_type[-1])
-			else:
-				self.num_replicas = int(self.hamiltonian_type[-2:])
+	if 'H_(d+1)' in self.hamiltonian_type:
+		if self.hamiltonian_type[-2] == '_': 
+			self.num_replicas = int(self.hamiltonian_type[-1])
 		else:
-			self.num_replicas = 1
+			self.num_replicas = int(self.hamiltonian_type[-2:])
+	else:
+		self.num_replicas = 1
 
-		# if self.hamiltonian_type == 'H':
-		# 	self.total_qubits = self.w_hh.shape[0]
-		
-		self.init_weights()		
+	# if self.hamiltonian_type == 'H':
+	# 	self.total_qubits = self.w_hh.shape[0]
+	
+	self.init_weights()		
 
-		if self.sampler_type in ['dwave-sim', 'dwave-sim-SA','dwave-sim-SQA', 'dwave-sim-SA-H-eff']:
-			self.sampler = SimulatedAnnealingSampler()
+	if self.sampler_type in ['dwave-sim', 'dwave-sim-SA','dwave-sim-SQA', 'dwave-sim-SA-H-eff']:
+		self.sampler = SimulatedAnnealingSampler()
 
-		elif self.sampler_type  in ['dwave-qpu', 'dwave-qpu-SA','dwave-qpu-SQA']:
-			with open('/home/users/kruse/Hamiltonian-based-QRL/token.yaml') as f:
-				token_file = yaml.load(f, Loader=yaml.FullLoader)
-			token = token_file['token']
+	elif self.sampler_type  in ['dwave-qpu', 'dwave-qpu-SA','dwave-qpu-SQA']:
+		with open('/home/users/kruse/Hamiltonian-based-QRL/token.yaml') as f:
+			token_file = yaml.load(f, Loader=yaml.FullLoader)
+		token = token_file['token']
 
-			qpu = DWaveSampler(solver=dict(topology__type='pegasus', name='Advantage_system6.4'), token=token)
-			if not config['fixed_embedding']:
-				self.sampler = EmbeddingComposite(qpu, embedding_parameters={'max_no_improvement': config['embedding']['max_no_improvement'],
-											'random_seed': config['embedding']['random_seed']})
-			else:
-				embedding = np.load(f"{self.embedding_path}/{self.layers}/{self.hamiltonian_type}/{config['embedding_id']}.npy", allow_pickle=True).item()
-				self.sampler = FixedEmbeddingComposite(qpu, embedding['embedding'])
+		qpu = DWaveSampler(solver=dict(topology__type='pegasus', name='Advantage_system6.4'), token=token)
+		if not config['fixed_embedding']:
+			self.sampler = EmbeddingComposite(qpu, embedding_parameters={'max_no_improvement': config['embedding']['max_no_improvement'],
+										'random_seed': config['embedding']['random_seed']})
+		else:
+			embedding = np.load(f"{self.embedding_path}/{self.layers}/{self.hamiltonian_type}/{config['embedding_id']}.npy", allow_pickle=True).item()
+			self.sampler = FixedEmbeddingComposite(qpu, embedding['embedding'])
 
 	
 	def generate_ising_model(self, visible_nodes):
