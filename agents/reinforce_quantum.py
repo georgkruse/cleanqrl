@@ -43,12 +43,8 @@ class ReinforceAgentQuantum(nn.Module):
             # The variational weights are initialized differently according to the config file
             if self.init_method == "uniform":
                 self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi, requires_grad=True))
-            elif self.init_method == "small_random":
-                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 0.2 - 0.1, requires_grad=True))
-            elif self.init_method == "reduced_domain":
-                initial_guess = 0.1
-                alpha = fsolve(lambda a: calculate_a(a,self.S,self.num_layers), initial_guess)
-                self.register_parameter(name="variational_actor", param = nn.Parameter((torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi) * alpha, requires_grad=True))    
+            else:
+                raise ValueError("Invalid initialization method")    
         
         dev = qml.device(config["device"], wires = self.wires)
         if self.ansatz == "hea":
@@ -64,8 +60,8 @@ class ReinforceAgentQuantum(nn.Module):
                          "actor", 
                          self.observables)
         
-        if self.config["diff_method"] == "backprop" or x.shape[0] == 1:
-            logits = logits.reshape(x.shape[0], self.num_actions)
+        if type(logits) == list:
+            logits = torch.stack(logits, dim = 1)
         logits_scaled = logits * self._parameters["output_scaling_actor"]
         probs = Categorical(logits=logits_scaled)
         action = probs.sample()
@@ -151,7 +147,7 @@ def reinforce_quantum(config):
         optimizer.step()
 
         metrics = {
-            "episodic_return": infos["episode"]["r"][0],
+            "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
             "global_step": global_step,
             "episode": global_episodes,
             "loss": loss.item()

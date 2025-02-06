@@ -106,7 +106,7 @@ def reinforce_classical(config):
         optimizer.step()
 
         metrics = {
-            "episodic_return": infos["episode"]["r"][0],
+            "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
             "global_step": global_step,
             "episode": global_episodes,
             "loss": loss.item()

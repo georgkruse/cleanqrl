@@ -133,15 +133,20 @@ def ppo_classical(config):
 
             if len(infos)>0:
                 global_episodes += 1
-                episode_returns.append(infos["final_info"][0]["episode"]["r"][0])
+                episode_returns.append(int(infos["final_info"][0]["episode"]["r"][0]))
                 global_step_returns.append(global_step)
                 metrics = {
-                    "episodic_return": infos["final_info"][0]["episode"]["r"][0],
+                    "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
                     "global_step": global_step,
                     "episode": global_episodes
                 }
-            
-                ray.train.report(metrics = metrics)
+
+                if ray.is_initialized():
+                    ray.train.report(metrics = metrics)
+                else:
+                    with open(report_path, "a") as f:
+                        json.dump(metrics, f)
+                        f.write("\n")
 
             if global_episodes >= 100:
                 if global_step % 1000 == 0:

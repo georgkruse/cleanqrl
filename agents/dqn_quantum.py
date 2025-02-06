@@ -47,22 +47,18 @@ class QRLAgentDQN(nn.Module):
             # The variational weights are initialized differently according to the config file
             if self.init_method == "uniform":
                 self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi, requires_grad=True))
-            elif self.init_method == "small_random":
-                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 0.2 - 0.1, requires_grad=True))
-            elif self.init_method == "reduced_domain":
-                initial_guess = 0.1
-                alpha = fsolve(lambda a: calculate_a(a,self.S,self.num_layers), initial_guess)
-                self.register_parameter(name="variational_actor", param = nn.Parameter((torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi) * alpha, requires_grad=True))    
+            else:
+                raise ValueError("Invalid initialization method")
         
         dev = qml.device(config["device"], wires = self.wires)
-        if self.ansatz == "hwe":
-            self.qc = qml.QNode(ansatz_hwe, dev, diff_method = config["diff_method"], interface = "torch")
+        if self.ansatz == "hea":
+            self.qc = qml.QNode(hea, dev, diff_method = config["diff_method"], interface = "torch")
         
     def forward(self, x):
         x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
         logits = self.qc(x, self._parameters["input_scaling_actor"], self._parameters["variational_actor"], self.wires, self.num_layers, "actor", self.observables)
-        if self.config["diff_method"] == "backprop" or x.shape[0] == 1:
-            logits = logits.reshape(x.shape[0], self.num_actions)
+        if type(logits) == list:
+            logits = torch.stack(logits, dim = 1)
         logits_scaled = logits * self._parameters["output_scaling_actor"]
         return logits_scaled
 
@@ -105,7 +101,7 @@ def dqn_quantum(config):
     assert num_envs == 1, "environment vectorization not possible in DQN"
 
 
-    q_network = DQNAgentQuantum(envs, config).to(device)
+    q_network = QRLAgentDQN(envs, config).to(device)
     optimizer = optim.Adam([
         {"params": q_network._parameters["input_scaling_actor"], "lr": lr_input_scaling},
         {"params": q_network._parameters["output_scaling_actor"], "lr": lr_output_scaling},
@@ -147,19 +143,15 @@ def dqn_quantum(config):
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if info and "episode" in info:
-                    global_episodes +=1
-                    episode_returns.append(info["episode"]["r"][0])
-                    global_step_returns.append(global_step)
-                    metrics = {
-                        "episodic_return": info["episode"]["r"][0],
-                        "global_step": global_step,
-                        "episode": global_episodes
-                    }
-
-                    ray.train.report(metrics = metrics)
+        if len(infos)>0:
+                global_episodes += 1
+                episode_returns.append(int(infos["final_info"][0]["episode"]["r"][0]))
+                global_step_returns.append(global_step)
+                metrics = {
+                    "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
+                    "global_step": global_step,
+                    "episode": global_episodes
+                }
 
 
         if global_episodes >= 100:
@@ -200,5 +192,13 @@ def dqn_quantum(config):
                     target_network_param.data.copy_(
                         tau * q_network_param.data + (1.0 - tau) * target_network_param.data
                     )
+        
+        if (global_step > learning_starts and global_step % train_frequency == 0) or "episode" in infos:
+            if ray.is_initialized():
+                ray.train.report(metrics=metrics)
+            else:
+                with open(report_path, "a") as f:
+                    json.dump(metrics, f)
+                    f.write("\n") 
 
     envs.close()

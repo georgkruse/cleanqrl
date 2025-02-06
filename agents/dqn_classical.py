@@ -110,12 +110,15 @@ def dqn_classical(config: dict):
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
 
-        metrics = {"global_step": global_step}
-        if infos and "episode" in infos:
-            global_episodes += 1
-            metrics["episodic_return"] = infos["episode"]["r"][0]
-            metrics["episode"] = global_episodes
-            episode_returns.append(infos["episode"]["r"][0])
+        if len(infos)>0:
+                global_episodes += 1
+                episode_returns.append(int(infos["final_info"][0]["episode"]["r"][0]))
+                global_step_returns.append(global_step)
+                metrics = {
+                    "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
+                    "global_step": global_step,
+                    "episode": global_episodes
+                }
             
 
 

@@ -17,9 +17,10 @@ def layer_hea(x, input_scaling_params, rotational_params, wires):
         qml.RZ(rotational_params[i+len(wires)], wires = [wire])
 
     if len(wires) == 2:
-        qml.broadcast(unitary=qml.CZ, pattern = "chain", wires = wires)
+        qml.CZ(wires = wires)
     else:
-        qml.broadcast(unitary=qml.CZ, pattern = "ring", wires = wires)
+        for i in range(len(wires)):
+            qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
 
 
 def hea(x, input_scaling_weights,variational_weights, wires, layers, type_, observables = "None"):

@@ -22,39 +22,64 @@ class PPOAgentQuantum(nn.Module):
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.ansatz = config["ansatz"]
-        self.dynamic_meas = config["dynamic_meas"]
+        self.wires = range(self.num_qubits)
+        self.init_method = config["init_method"]
+        self.observables = config["observables"]
+        if self.observables == "global":
+            self.S = self.num_qubits
+        elif self.observables == "local":
+            self.S = self.num_qubits // 2
         self.wires = range(self.num_qubits)
 
         if self.ansatz == "hea":
             self.register_parameter(name="input_scaling_critic", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
-            self.register_parameter(name="variational_critic", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
-        
             self.register_parameter(name="input_scaling_actor", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
-            self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
 
             self.register_parameter(name="output_scaling_critic", param = nn.Parameter(torch.ones(1), requires_grad=True))
             self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
+
+            if self.init_method == "uniform":
+                self.register_parameter(name="variational_critic", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
+                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
+            else:
+                raise ValueError("Invalid initialization method")
         
         self.measured_qubits = torch.randint(low = 0, high = self.num_qubits, size = (self.num_layers,2), requires_grad = False)
 
-        dev = qml.device("lightning.qubit", wires = self.wires)
-        if self.ansatz == "hwe":
-            if self.dynamic_meas:
-                self.qc = qml.QNode(ansatz_hwe, dev,mcm_method="deferred", diff_method = "backprop", interface = "torch")
-            else:
-                self.qc = qml.QNode(ansatz_hwe, dev, diff_method = "backprop", interface = "torch")
+        dev = qml.device(config["device"], wires = self.wires)
+        if self.ansatz == "hea":
+            self.qc = qml.QNode(hea, dev, diff_method = config["diff_method"], interface = "torch")
         
     def get_value(self,x):
-        return self._parameters["output_scaling_critic"] * self.qc(x, self._parameters["input_scaling_critic"], self._parameters["variational_critic"], self.wires, self.num_layers, "critic", self.dynamic_meas, self.measured_qubits)
+        return self._parameters["output_scaling_critic"] * self.qc(x, 
+                         self._parameters["input_scaling_actor"], 
+                         self._parameters["variational_actor"], 
+                         self.wires, 
+                         self.num_layers, 
+                         "critic", 
+                         self.observables)
 
     def get_action_and_value(self, x, action=None):
-        logits = self.qc(x, self._parameters["input_scaling_actor"], self._parameters["variational_actor"], self.wires, self.num_layers, "actor", self.dynamic_meas, self.measured_qubits)
+        logits = self.qc(x, 
+                         self._parameters["input_scaling_actor"], 
+                         self._parameters["variational_actor"], 
+                         self.wires, 
+                         self.num_layers, 
+                         "actor", 
+                         self.observables)
+        
         logits = torch.stack((logits[0], logits[1]), dim=1)
         logits_scaled = logits * self._parameters["output_scaling_actor"]
         probs = Categorical(logits=logits_scaled)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self._parameters["output_scaling_critic"] * self.qc(x, self._parameters["input_scaling_critic"], self._parameters["variational_critic"], self.wires, self.num_layers, "critic", self.dynamic_meas, self.measured_qubits)
+        return action, probs.log_prob(action), probs.entropy(), self._parameters["output_scaling_critic"] * self.qc(x, 
+                         self._parameters["input_scaling_actor"], 
+                         self._parameters["variational_actor"], 
+                         self.wires, 
+                         self.num_layers, 
+                         "critic", 
+                         self.observables)
 
 
 def ppo_quantum(config):
@@ -158,10 +183,10 @@ def ppo_quantum(config):
 
             if len(infos)>0:
                 global_episodes += 1
-                episode_returns.append(infos["final_info"][0]["episode"]["r"][0])
+                episode_returns.append(int(infos["final_info"][0]["episode"]["r"][0]))
                 global_step_returns.append(global_step)
                 metrics = {
-                    "episodic_return": infos["final_info"][0]["episode"]["r"][0],
+                    "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
                     "global_step": global_step,
                     "episode": global_episodes
                 }

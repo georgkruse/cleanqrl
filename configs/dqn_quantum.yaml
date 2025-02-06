@@ -6,13 +6,13 @@ tune_config:
   num_gpus:       0
   ray_num_trial_samples:  3
   cpus_per_worker:        3
-  gpus_per_worker:        1
+  gpus_per_worker:        0
 
 algorithm_config:
   env_id:   "CartPole-v1"
 
 
-  agent:               DQN_classical
+  agent:               DQN_quantum
   total_timesteps:    1000
   learning_rate:      0.001
   num_envs:           1
@@ -26,6 +26,17 @@ algorithm_config:
   exploration_fraction:   0.35
   learning_starts:        100
   train_frequency:        1
+
+  lr_input_scaling:   0.001    
+  lr_variational:   0.001    
+  lr_output_scaling:   0.1   
+  num_qubits:         4
+  num_layers:         5
+  ansatz:             hea
+  init_method:        uniform
+  observables:        global
+  device:             default.qubit
+  diff_method:        adjoint
   
 
   cuda: False
