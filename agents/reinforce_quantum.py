@@ -146,18 +146,25 @@ def reinforce_quantum(config):
         loss.backward()
         optimizer.step()
 
-        metrics = {
-            "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
-            "global_step": global_step,
-            "episode": global_episodes,
-            "loss": loss.item()
-        }
-        if ray.is_initialized():
-            ray.train.report(metrics=metrics)
-        else:
-            with open(report_path, "a") as f:
-                json.dump(metrics, f)
-                f.write("\n")
+        if "final_info" in infos:
+                for info in infos["final_info"]:
+                    if info and "episode" in info:
+                        global_episodes +=1
+                        episode_returns.append(float(info["episode"]["r"][0]))
+                        global_step_returns.append(global_step)
+                        metrics = {
+                            "episodic_return": float(info["episode"]["r"][0]),
+                            "global_step": global_step,
+                            "episode": global_episodes
+                        }
+
+                # This needs to be placed at the end to include loss loggings
+                if ray.is_initialized():
+                    ray.train.report(metrics=metrics)
+                else:
+                    with open(report_path, "a") as f:
+                        json.dump(metrics, f)
+                        f.write("\n")
 
         print(f"Global step: {global_step}, Return: {sum(rewards)}, Loss: {loss.item()}")
 

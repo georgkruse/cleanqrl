@@ -13,7 +13,7 @@ algorithm_config:
   agent:               PPO_quantum
   total_timesteps:    1000000
   learning_rate:      0.001    # only if model is classical
-  num_envs:           1
+  num_envs:           2
   num_steps:          128
   anneal_lr:          True
   gamma:              0.99
