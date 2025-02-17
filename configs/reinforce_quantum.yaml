@@ -10,6 +10,7 @@ tune_config:
 
 algorithm_config:
   env_id:   "CartPole-v1"
+  env_wrapper:        minmax
   agent:              REINFORCE_quantum
   total_timesteps:    1000
   lr_input_scaling:   0.001    

@@ -14,6 +14,7 @@ import pennylane as qml
 
 from agents.replay_buffer import ReplayBuffer
 from ansatzes.hardware_efficient_ansatz import hea
+from ansatzes.hamiltonian_encoding_ansatz import hamiltonian_encoding_ansatz
 from utils.env_utils import make_env
 
 
@@ -22,12 +23,12 @@ def calculate_a(a,S,L):
     right_side = (S * (2 * L - 1) - 2) / (S * (2 * L + 1))
     return left_side - right_side
 
-class QRLAgentDQN(nn.Module):
+class QRLAgentDQNHamiltonian(nn.Module):
     def __init__(self,envs,config):
         super().__init__()
         self.config = config
-        self.num_features = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.observation_space = envs.observation_space
+        self.num_actions = envs.action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.ansatz = config["ansatz"]
@@ -39,20 +40,19 @@ class QRLAgentDQN(nn.Module):
             self.S = self.num_qubits // 2
         self.wires = range(self.num_qubits)
 
-        if self.ansatz == "hea":
-            # Input and Output Scaling weights are always initialized as 1s        
-            self.register_parameter(name="input_scaling_actor", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
-            self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
 
-            # The variational weights are initialized differently according to the config file
-            if self.init_method == "uniform":
-                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi, requires_grad=True))
-            else:
-                raise ValueError("Invalid initialization method")
+        # Input and Output Scaling weights are always initialized as 1s        
+        self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
+
+        # The variational weights are initialized differently according to the config file
+        if self.init_method == "uniform":
+            self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,2) * 2 * torch.pi - torch.pi, requires_grad=True))
+        else:
+            raise ValueError("Invalid initialization method")
         
         dev = qml.device(config["device"], wires = self.wires)
-        if self.ansatz == "hea":
-            self.qc = qml.QNode(hea, dev, diff_method = config["diff_method"], interface = "torch")
+
+        self.qc = qml.QNode(hamiltonian_encoding_ansatz, dev, diff_method = config["diff_method"], interface = "torch")
         
     def forward(self, x):
         x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
@@ -67,7 +67,7 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
-def dqn_quantum(config):
+def dqn_quantum_hamiltonian(config):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -94,27 +94,25 @@ def dqn_quantum(config):
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id,config) for i in range(num_envs)]
-    )
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = make_env(env_id,config)()
+           
+    # assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
     assert num_envs == 1, "environment vectorization not possible in DQN"
 
 
-    q_network = QRLAgentDQN(envs, config).to(device)
+    q_network = QRLAgentDQNHamiltonian(envs, config).to(device)
     optimizer = optim.Adam([
-        {"params": q_network._parameters["input_scaling_actor"], "lr": lr_input_scaling},
         {"params": q_network._parameters["output_scaling_actor"], "lr": lr_output_scaling},
         {"params": q_network._parameters["variational_actor"], "lr": lr_variational}
     ])
-    target_network = QRLAgentDQN(envs, config).to(device)
+    target_network = QRLAgentDQNHamiltonian(envs, config).to(device)
 
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
         buffer_size,
-        envs.single_observation_space,
-        envs.single_action_space,
+        envs.observation_space,
+        envs.action_space,
         device,
         handle_timeout_termination=False,
     )

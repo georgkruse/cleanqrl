@@ -9,7 +9,7 @@ from utils.plotting_utils import plot_single_run
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = 'configs/ppo_classical.yaml'
+    config_path = 'configs/dqn_quantum_tsp.yaml'
 
     # Load the config file 
     with open(config_path) as f:

@@ -208,11 +208,12 @@ class ReplayBuffer(BaseBuffer):
             )
         self.optimize_memory_usage = optimize_memory_usage
 
-        self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        # self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        self.observations = [[] for _ in range(self.buffer_size)] #, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
 
-        if not optimize_memory_usage:
-            # When optimizing memory, `observations` contains also the next observation
-            self.next_observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        # if not optimize_memory_usage:
+        #     # When optimizing memory, `observations` contains also the next observation
+        #     self.next_observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
 
         self.actions = np.zeros(
             (self.buffer_size, self.n_envs, self.action_dim), dtype=self._maybe_cast_dtype(action_space.dtype)
@@ -225,22 +226,6 @@ class ReplayBuffer(BaseBuffer):
         self.handle_timeout_termination = handle_timeout_termination
         self.timeouts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
 
-        if psutil is not None:
-            total_memory_usage: float = (
-                self.observations.nbytes + self.actions.nbytes + self.rewards.nbytes + self.dones.nbytes
-            )
-
-            if not optimize_memory_usage:
-                total_memory_usage += self.next_observations.nbytes
-
-            if total_memory_usage > mem_available:
-                # Convert to GB
-                total_memory_usage /= 1e9
-                mem_available /= 1e9
-                warnings.warn(
-                    "This system does not have apparently enough memory to store the complete "
-                    f"replay buffer {total_memory_usage:.2f}GB > {mem_available:.2f}GB"
-                )
 
     def add(
         self,

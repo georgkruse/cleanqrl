@@ -124,9 +124,9 @@ optimal_policy_types = {'crawford':       optimal_policy_crawford,
                         'neumann_c':      optimal_policy_neumann_c,
                         # 'neumann_d':      create_neumann_d,
                         }
-class MazeGame(Env):
+class MazeEnv(Env):
     '''
-    Base class for EggholderGame
+    Base class for MazeGame
     '''
 
     def __init__(self, config):

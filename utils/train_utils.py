@@ -5,6 +5,7 @@ from agents.dqn_quantum import dqn_quantum
 from agents.reinforce_classical import reinforce_classical
 from agents.reinforce_quantum import reinforce_quantum
 
+from agents.dqn_quantum_hamiltonian import dqn_quantum_hamiltonian
 
 agent_switch = {
     "PPO_classical": ppo_classical, 
@@ -12,7 +13,8 @@ agent_switch = {
     "DQN_classical": dqn_classical,
     "DQN_quantum": dqn_quantum,
     "REINFORCE_classical": reinforce_classical,
-    "REINFORCE_quantum": reinforce_quantum
+    "REINFORCE_quantum": reinforce_quantum,
+    'DQN_quantum_hamiltonian': dqn_quantum_hamiltonian
 }
 
 def train_agent(config):

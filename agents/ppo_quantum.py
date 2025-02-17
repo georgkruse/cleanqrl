@@ -11,7 +11,7 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import pennylane as qml
 
-from ansatzes.hea import hea
+from ansatzes.hardware_efficient_ansatz import hea
 from utils.env_utils import make_env
 
 class PPOAgentQuantum(nn.Module):

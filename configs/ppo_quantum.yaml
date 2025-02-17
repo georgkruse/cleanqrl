@@ -10,6 +10,7 @@ tune_config:
 
 algorithm_config:
   env_id:   "CartPole-v1"
+  env_wrapper:        minmax
   agent:               PPO_quantum
   total_timesteps:    1000000
   learning_rate:      0.001    # only if model is classical

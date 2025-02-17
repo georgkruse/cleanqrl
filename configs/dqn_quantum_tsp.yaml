@@ -9,9 +9,9 @@ tune_config:
   gpus_per_worker:        0
 
 algorithm_config:
-  env_id:   "CartPole-v1"
-  env_wrapper:        minmax
-  agent:               DQN_quantum
+  env_id:             TSP-v1
+  action_space_type:  nodes
+  agent:              DQN_quantum_hamiltonian
   total_timesteps:    1000
   learning_rate:      0.001
   num_envs:           1
