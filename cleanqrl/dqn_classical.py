@@ -10,67 +10,43 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import pennylane as qml
+from replay_buffer import ReplayBuffer
 
-from agents.replay_buffer import ReplayBuffer
-from ansatzes.hardware_efficient_ansatz import hea
-from ansatzes.hamiltonian_encoding_ansatz import hamiltonian_encoding_ansatz
-from utils.env_utils import make_env
+def make_env(env_id, config=None):
+    def thunk():
+        env = gym.make(env_id)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        return env
+
+    return thunk
 
 
-def calculate_a(a,S,L):
-    left_side = np.sin(2 * a * np.pi) / (2 * a * np.pi)
-    right_side = (S * (2 * L - 1) - 2) / (S * (2 * L + 1))
-    return left_side - right_side
-
-class QRLAgentDQNHamiltonian(nn.Module):
-    def __init__(self,envs,config):
+# ALGO LOGIC: initialize agent here:
+class QNetwork(nn.Module):
+    def __init__(self, env):
         super().__init__()
-        self.config = config
-        self.observation_space = envs.observation_space
-        self.num_actions = envs.action_space.n
-        self.num_qubits = config["num_qubits"]
-        self.num_layers = config["num_layers"]
-        self.ansatz = config["ansatz"]
-        self.init_method = config["init_method"]
-        self.observables = config["observables"]
-        if self.observables == "global":
-            self.S = self.num_qubits
-        elif self.observables == "local":
-            self.S = self.num_qubits // 2
-        self.wires = range(self.num_qubits)
+        self.network = nn.Sequential(
+            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
+            nn.ReLU(),
+            nn.Linear(120, 84),
+            nn.ReLU(),
+            nn.Linear(84, env.single_action_space.n),
+        )
 
-
-        # Input and Output Scaling weights are always initialized as 1s        
-        self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
-
-        # The variational weights are initialized differently according to the config file
-        if self.init_method == "uniform":
-            self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,2) * 2 * torch.pi - torch.pi, requires_grad=True))
-        else:
-            raise ValueError("Invalid initialization method")
-        
-        dev = qml.device(config["device"], wires = self.wires)
-
-        self.qc = qml.QNode(hamiltonian_encoding_ansatz, dev, diff_method = config["diff_method"], interface = "torch")
-        
     def forward(self, x):
-        x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
-        logits = self.qc(x, self._parameters["input_scaling_actor"], self._parameters["variational_actor"], self.wires, self.num_layers, "actor", self.observables)
-        if type(logits) == list:
-            logits = torch.stack(logits, dim = 1)
-        logits_scaled = logits * self._parameters["output_scaling_actor"]
-        return logits_scaled
+        return self.network(x)
+
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
 
 
-def dqn_quantum_hamiltonian(config):
+def dqn_classical(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
+    learning_rate = config["learning_rate"]
     buffer_size = config["buffer_size"]
     total_timesteps = config["total_timesteps"]
     start_e = config["start_e"]
@@ -82,9 +58,6 @@ def dqn_quantum_hamiltonian(config):
     gamma = config["gamma"]
     target_network_frequency = config["target_network_frequency"]
     tau = config["tau"]
-    lr_input_scaling = config["lr_input_scaling"]
-    lr_variational = config["lr_variational"]
-    lr_output_scaling = config["lr_output_scaling"]
 
     if not ray.is_initialized():
         report_path = os.path.join(config["path"], "result.json")
@@ -94,35 +67,28 @@ def dqn_quantum_hamiltonian(config):
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
     # env setup
-    envs = make_env(env_id,config)()
-           
-    # assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = gym.vector.SyncVectorEnv(
+        [make_env(env_id,) for i in range(num_envs)]
+    )
+    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
     assert num_envs == 1, "environment vectorization not possible in DQN"
 
-
-    q_network = QRLAgentDQNHamiltonian(envs, config).to(device)
-    optimizer = optim.Adam([
-        {"params": q_network._parameters["output_scaling_actor"], "lr": lr_output_scaling},
-        {"params": q_network._parameters["variational_actor"], "lr": lr_variational}
-    ])
-    target_network = QRLAgentDQNHamiltonian(envs, config).to(device)
+    q_network = QNetwork(envs).to(device)
+    optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
+    target_network = QNetwork(envs).to(device)    
 
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
         buffer_size,
-        envs.observation_space,
-        envs.action_space,
+        envs.single_observation_space,
+        envs.single_action_space,
         device,
         handle_timeout_termination=False,
     )
     start_time = time.time()
 
-    # global parameters to log
-    global_step = 0
     global_episodes = 0
-    global_circuit_executions = 0
-    steps_per_eposide = 0
     episode_returns = []
     global_step_returns = []
 
@@ -139,8 +105,18 @@ def dqn_quantum_hamiltonian(config):
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
+
+        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        real_next_obs = next_obs.copy()
+        # Dont know about this as well?
+        # for idx, trunc in enumerate(truncations):
+            # if trunc:
+            #     real_next_obs[idx] = infos["final_observation"][idx]
+        rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+
+        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+        obs = next_obs
+
         if len(infos)>0:
                 global_episodes += 1
                 episode_returns.append(int(infos["final_info"][0]["episode"]["r"][0]))
@@ -150,21 +126,12 @@ def dqn_quantum_hamiltonian(config):
                     "global_step": global_step,
                     "episode": global_episodes
                 }
+            
 
 
         if global_episodes >= 100:
             if global_step % 1000 == 0:
                 print(np.mean(episode_returns[-10:]))
-
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
-        real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
-        rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
-
-        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        obs = next_obs
 
         # ALGO LOGIC: training.
         if global_step > learning_starts:
@@ -190,13 +157,14 @@ def dqn_quantum_hamiltonian(config):
                     target_network_param.data.copy_(
                         tau * q_network_param.data + (1.0 - tau) * target_network_param.data
                     )
-        
+
+            metrics["loss"] = loss.item()
+
         if (global_step > learning_starts and global_step % train_frequency == 0) or "episode" in infos:
             if ray.is_initialized():
                 ray.train.report(metrics=metrics)
             else:
                 with open(report_path, "a") as f:
                     json.dump(metrics, f)
-                    f.write("\n") 
-
+                    f.write("\n")    
     envs.close()

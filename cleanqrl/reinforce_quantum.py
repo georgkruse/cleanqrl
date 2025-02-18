@@ -10,8 +10,40 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import pennylane as qml
 
-from ansatzes.hardware_efficient_ansatz import hea
-from utils.env_utils import make_env
+class ArctanNormalizationWrapper(gym.ObservationWrapper):
+    def observation(self, obs):
+        return np.arctan(obs)
+
+
+def make_env(env_id, config=None):
+    def thunk():
+        env = gym.make(env_id)
+        env = ArctanNormalizationWrapper(env)       
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        return env
+
+    return thunk
+
+
+def hardware_efficient_ansatz(x, input_scaling_weights, variational_weights, wires, layers, num_actions):
+    for layer in range(layers):
+        for i, wire in enumerate(wires):
+            qml.RX(input_scaling_weights[layer, i] * x[:,i], wires = [wire])
+    
+            for i, wire in enumerate(wires):
+                qml.RY(variational_weights[layer, i], wires = [wire])
+
+            for i, wire in enumerate(wires):
+                qml.RZ(variational_weights[layer, i+len(wires)], wires = [wire])
+
+            if len(wires) == 2:
+                qml.CZ(wires = wires)
+            else:
+                for i in range(len(wires)):
+                    qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
+        # TODO: make observation dependent on num_actions
+        return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+
 
 def calculate_a(a,S,L):
     left_side = np.sin(2 * a * np.pi) / (2 * a * np.pi)
@@ -19,62 +51,49 @@ def calculate_a(a,S,L):
     return left_side - right_side
 
 class ReinforceAgentQuantum(nn.Module):
-    def __init__(self,envs,config):
+    def __init__(self, envs, config):
         super().__init__()
         self.config = config
         self.num_features = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-        self.ansatz = config["ansatz"]
-        self.init_method = config["init_method"]
-        self.observables = config["observables"]
-        if self.observables == "global":
-            self.S = self.num_qubits
-        elif self.observables == "local":
-            self.S = self.num_qubits // 2
         self.wires = range(self.num_qubits)
 
-        if self.ansatz == "hea":
-            # Input and Output Scaling weights are always initialized as 1s        
-            self.register_parameter(name="input_scaling_actor", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
-            self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
-
-            # The variational weights are initialized differently according to the config file
-            if self.init_method == "uniform":
-                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi, requires_grad=True))
-            else:
-                raise ValueError("Invalid initialization method")    
+        # input and output scaling are always initialized as ones      
+        self.register_parameter(name="input_scaling", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
+        self.register_parameter(name="output_scaling", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
+        # trainable weights are initialized randomly between -pi and pi
+        self.register_parameter(name="weights", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi, requires_grad=True))
         
-        dev = qml.device(config["device"], wires = self.wires)
-        if self.ansatz == "hea":
-            self.qc = qml.QNode(hea, dev, diff_method = config["diff_method"], interface = "torch")
+        device = qml.device(config["device"], wires = self.wires)
+        self.quantum_circuit = qml.QNode(hardware_efficient_ansatz, device, diff_method = config["diff_method"], interface = "torch")
         
     def get_action_and_logprob(self, x):
         x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
-        logits = self.qc(x, 
-                         self._parameters["input_scaling_actor"], 
-                         self._parameters["variational_actor"], 
+        logits = self.quantum_circuit(x, 
+                         self._parameters["input_scaling"], 
+                         self._parameters["weights"], 
                          self.wires, 
                          self.num_layers, 
-                         "actor", 
-                         self.observables)
+                         self.num_actions)
         
         if type(logits) == list:
             logits = torch.stack(logits, dim = 1)
-        logits_scaled = logits * self._parameters["output_scaling_actor"]
+        logits_scaled = logits * self._parameters["output_scaling"]
         probs = Categorical(logits=logits_scaled)
         action = probs.sample()
         return action, probs.log_prob(action)
 
 
 def reinforce_quantum(config):
+    cuda = config["cuda"]
+    env_id = config["env_id"]
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
-    env_id = config["env_id"]
     gamma = config["gamma"]
     lr_input_scaling = config["lr_input_scaling"]
-    lr_variational = config["lr_variational"]
+    lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
 
     if not ray.is_initialized():
@@ -90,12 +109,11 @@ def reinforce_quantum(config):
 
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-
     agent = ReinforceAgentQuantum(envs, config).to(device)
     optimizer = optim.Adam([
-        {"params": agent._parameters["input_scaling_actor"], "lr": lr_input_scaling},
-        {"params": agent._parameters["output_scaling_actor"], "lr": lr_output_scaling},
-        {"params": agent._parameters["variational_actor"], "lr": lr_variational}
+        {"params": agent._parameters["input_scaling"], "lr": lr_input_scaling},
+        {"params": agent._parameters["output_scaling"], "lr": lr_output_scaling},
+        {"params": agent._parameters["weights"], "lr": lr_weights}
     ])
 
 
@@ -146,25 +164,25 @@ def reinforce_quantum(config):
         loss.backward()
         optimizer.step()
 
-        if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        global_episodes +=1
-                        episode_returns.append(float(info["episode"]["r"][0]))
-                        global_step_returns.append(global_step)
-                        metrics = {
-                            "episodic_return": float(info["episode"]["r"][0]),
-                            "global_step": global_step,
-                            "episode": global_episodes
-                        }
+        if len(infos)>0:
+            for info in infos:
+                if info and "episode" in info:
+                    global_episodes +=1
+                    episode_returns.append(float(info["episode"]["r"]))
+                    global_step_returns.append(global_step)
+                    metrics = {
+                        "episodic_return": float(info["episode"]["r"]),
+                        "global_step": global_step,
+                        "episode": global_episodes
+                    }
 
-                # This needs to be placed at the end to include loss loggings
-                if ray.is_initialized():
-                    ray.train.report(metrics=metrics)
-                else:
-                    with open(report_path, "a") as f:
-                        json.dump(metrics, f)
-                        f.write("\n")
+            # This needs to be placed at the end to include loss loggings
+            if ray.is_initialized():
+                ray.train.report(metrics=metrics)
+            else:
+                with open(report_path, "a") as f:
+                    json.dump(metrics, f)
+                    f.write("\n")
 
         print(f"Global step: {global_step}, Return: {sum(rewards)}, Loss: {loss.item()}")
 

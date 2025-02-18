@@ -14,7 +14,7 @@ algorithm_config:
   agent:              REINFORCE_quantum
   total_timesteps:    1000
   lr_input_scaling:   0.001    
-  lr_variational:   0.001    
+  lr_weights:   0.001    
   lr_output_scaling:   0.1    
   num_envs:           1
   gamma:              0.99

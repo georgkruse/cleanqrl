@@ -8,12 +8,6 @@ import torch as th
 from gymnasium import spaces
 
 
-try:
-    # Check memory used by replay buffer when possible
-    import psutil
-except ImportError:
-    psutil = None
-
 class ReplayBufferSamples:
     def __init__(self, observations, actions, next_observations, dones, rewards):
         self.observations = observations
@@ -195,9 +189,6 @@ class ReplayBuffer(BaseBuffer):
         # Adjust buffer size
         self.buffer_size = max(buffer_size // n_envs, 1)
 
-        # Check that the replay buffer can fit into the memory
-        if psutil is not None:
-            mem_available = psutil.virtual_memory().available
 
         # there is a bug if both optimize_memory_usage and handle_timeout_termination are true
         # see https://github.com/DLR-RM/stable-baselines3/issues/934
@@ -208,12 +199,13 @@ class ReplayBuffer(BaseBuffer):
             )
         self.optimize_memory_usage = optimize_memory_usage
 
-        # self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
-        self.observations = [[] for _ in range(self.buffer_size)] #, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        # self.observations = [[] for _ in range(self.buffer_size)] #, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
 
         # if not optimize_memory_usage:
         #     # When optimizing memory, `observations` contains also the next observation
-        #     self.next_observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        self.next_observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        # self.next_observations = [[] for _ in range(self.buffer_size)]
 
         self.actions = np.zeros(
             (self.buffer_size, self.n_envs, self.action_dim), dtype=self._maybe_cast_dtype(action_space.dtype)

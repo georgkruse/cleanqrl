@@ -1,8 +1,8 @@
 import numpy as np
 import gymnasium as gym
-from envs.bandit import MultiArmedBanditEnv
-from envs.maze import MazeEnv
-from envs.tsp import TSPEnv
+from environments.bandit import MultiArmedBanditEnv
+from environments.maze import MazeEnv
+from environments.tsp import TSPEnv
 
 
 class MinMaxNormalizationWrapper(gym.ObservationWrapper):
@@ -19,6 +19,12 @@ class MinMaxNormalizationWrapper(gym.ObservationWrapper):
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
+
+class DictWrapper(gym.ObservationWrapper):
+    def observation(self, obs):
+        print('some')
+        return np.arctan(obs)
+
 
 
 def make_env(env_id, config=None):

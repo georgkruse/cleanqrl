@@ -27,7 +27,7 @@ algorithm_config:
   train_frequency:        1
 
   lr_input_scaling:   0.001    
-  lr_variational:   0.001    
+  lr_weights:   0.001    
   lr_output_scaling:   0.1   
   num_qubits:         4
   num_layers:         5

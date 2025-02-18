@@ -98,6 +98,7 @@ class TSPEnv(gym.Env):
         self.tour_edges = []
         self.step_rewards = []
         self.available_nodes = list(range(1, self.num_cities))
+        self.annotations = np.zeros(self.num_cities)
 
         self.prev_tour = copy.deepcopy(self.tour)
 
@@ -113,25 +114,26 @@ class TSPEnv(gym.Env):
                                         0] for idx in range(len(self.fully_connected_qubits))])
         
         state['linear_terms'] = np.stack([[int(key), value] for key, value in zip(linear.keys(),linear.values())])
+        state['quadratic_terms'] = np.stack([[int(key[0]), int(key[1]), value] for key, value in self.edge_weights.items()])
 
-        state['quadratic_terms'] = np.stack([[int(self.fully_connected_qubits[idx][0]),
-                                          int(self.fully_connected_qubits[idx][1]),
-                                          self.edge_weights] for idx in range(len(self.fully_connected_qubits))])
-        
-        if self.config['action_space_type'] == 'discrete_nodes':
-            state['current_node'] = np.array([-1])
-        else:
-            state['current_node'] = np.array([0])
 
-        self.current_node = state['current_node']
+        self.current_node = np.array([0])
 
-        state['annotations'] = np.zeros((self.num_cities))
+        state['current_node'] = self.current_node
+
+        state['annotations'] = self.annotations
 
         return deepcopy(state), {}
     
+    def sample_valid_action(self):
+        if self.action_space_type == 'nodes':
+            return np.random.choice(self.available_nodes)
+        elif self.action_space_type == 'edges':
+            return np.random.choice(self.available_edges)
+
     def step(self, action):        
         
-        if self.config['action_space'] == 'discrete_edges':
+        if self.action_space_type == 'edges':
             potential_edges = []
             for (node1, node2) in self.fully_connected_qubits:
                 if self.current_node == node1:
@@ -144,22 +146,21 @@ class TSPEnv(gym.Env):
             elif self.current_node == node2:
                 next_node = node1
 
-        elif self.config['action_space'] == 'discrete_nodes':
-            if action == 0:
-                print('stupid ray start up correction')
-                next_node = 1
-            else:
-                next_node = action
+        elif self.action_space_type == 'nodes':
+            next_node = action
 
         self.tour.append(next_node)
         self.tour_edges.append((deepcopy(self.tour[-1]), next_node))
         remove_node_ix = self.available_nodes.index(next_node)
+        self.annotations[next_node] = np.pi
+        self.current_node = np.array([self.tour[-1]])
+
         del self.available_nodes[remove_node_ix]
 
         if len(self.tour) > 1:
             reward = self.compute_reward(self.tsp_graph_nodes, self.prev_tour, self.tour)
             self.step_rewards.append(reward)
-            done = False if len(self.available_nodes) > 1 else True
+            terminations = False if len(self.available_nodes) > 1 else True
             
 
         if len(self.available_nodes) == 1:
@@ -168,35 +169,29 @@ class TSPEnv(gym.Env):
             reward = self.compute_reward(self.tsp_graph_nodes, self.prev_tour, self.tour)
             self.step_rewards.append(reward)
         
-        if done:
+        if terminations:
             tour_length = compute_tour_length(self.tsp_graph_nodes, self.tour)
-            self.ratio = tour_length/self.optimal_tour_length
+            ratio = tour_length/self.optimal_tour_length
+            self.ratio = ratio
+            info = {} #{'episode': {'r': tour_length, 'ratio': ratio}}
+            truncations = True
+        else: 
+            info = {}
+            truncations = False
 
         self.prev_tour = copy.deepcopy(self.tour)
         
-        self.state_list = self.graph_to_list(
-            self.tsp_graph_nodes, self.fully_connected_edges, self.edge_weights,
-            self.available_nodes, self.node_to_qubit_map)
-
         next_state = OrderedDict()
 
         linear = {}
 
-        for node in range(self.nodes):
+        for node in range(self.num_cities):
             linear[str(node)] = 0
         
         next_state['linear_terms'] = np.stack([[int(key), value] for key, value in zip(linear.keys(),linear.values())])
+        next_state['quadratic_terms'] = np.stack([[int(key[0]), int(key[1]), value] for key, value in self.edge_weights.items()])
 
-        next_state['quadratic_terms'] = np.stack([[int(self.fully_connected_qubits[idx][0]),
-                                          int(self.fully_connected_qubits[idx][1]),
-                                          self.state_list[idx+self.nodes]] for idx in range(len(self.fully_connected_qubits))])
-        
-        if self.config['action_space'] == 'discrete_nodes':
-            next_state['current_node'] = np.array([-1])
-        else:
-            next_state['current_node'] = np.array([self.tour[-1]])
+        next_state['current_node'] = self.current_node
+        next_state['annotations'] = self.annotations
 
-        self.current_node = next_state['current_node']
-        next_state['annotations'] = np.stack([[idx, self.state_list[idx]] for idx in range(self.nodes)])
-
-        return deepcopy(next_state), reward, done, False, {}
+        return deepcopy(next_state), reward, terminations, truncations, info

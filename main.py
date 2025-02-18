@@ -1,15 +1,20 @@
 import os
+import sys
 import yaml
 import datetime
 import shutil
-from utils.config_utils import generate_config
-from utils.train_utils import train_agent
-from utils.plotting_utils import plot_single_run
+
+# This is important for the import of the cleanqrl package. Do not delete this line
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleanqrl'))
+
+from cleanqrl_utils.config_utils import generate_config
+from cleanqrl_utils.train_utils import train_agent
+from cleanqrl_utils.plotting_utils import plot_single_run
 
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = 'configs/dqn_quantum_tsp.yaml'
+    config_path = 'configs/dqn_quantum.yaml'
 
     # Load the config file 
     with open(config_path) as f:

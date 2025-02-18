@@ -4,9 +4,9 @@ from ray import tune
 import yaml
 import datetime
 import shutil
-from utils.config_utils import generate_config
-from utils.train_utils import train_agent
-from utils.plotting_utils import plot_tune_run
+from cleanqrl_utils.config_utils import generate_config
+from cleanqrl_utils.train_utils import train_agent
+from cleanqrl_utils.plotting_utils import plot_tune_run
 
 if __name__ == "__main__":
     # Specify the path to the config file

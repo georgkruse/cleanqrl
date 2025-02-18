@@ -11,8 +11,41 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import pennylane as qml
 
-from ansatzes.hardware_efficient_ansatz import hea
-from utils.env_utils import make_env
+
+class ArctanNormalizationWrapper(gym.ObservationWrapper):
+    def observation(self, obs):
+        return np.arctan(obs)
+
+
+def make_env(env_id, config=None):
+    def thunk():
+        env = gym.make(env_id)
+        env = ArctanNormalizationWrapper(env)       
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        return env
+    
+    return thunk
+
+
+def hardware_efficient_ansatz(x, input_scaling_weights, variational_weights, wires, layers):
+    for layer in range(layers):
+        for i, wire in enumerate(wires):
+            qml.RX(input_scaling_weights[layer, i] * x[:,i], wires = [wire])
+    
+            for i, wire in enumerate(wires):
+                qml.RY(variational_weights[layer, i], wires = [wire])
+
+            for i, wire in enumerate(wires):
+                qml.RZ(variational_weights[layer, i+len(wires)], wires = [wire])
+
+            if len(wires) == 2:
+                qml.CZ(wires = wires)
+            else:
+                for i in range(len(wires)):
+                    qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
+
+        return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+
 
 class PPOAgentQuantum(nn.Module):
     def __init__(self,envs,config):
@@ -21,65 +54,48 @@ class PPOAgentQuantum(nn.Module):
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-        self.ansatz = config["ansatz"]
-        self.wires = range(self.num_qubits)
-        self.init_method = config["init_method"]
-        self.observables = config["observables"]
-        if self.observables == "global":
-            self.S = self.num_qubits
-        elif self.observables == "local":
-            self.S = self.num_qubits // 2
         self.wires = range(self.num_qubits)
 
-        if self.ansatz == "hea":
-            self.register_parameter(name="input_scaling_critic", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
-            self.register_parameter(name="input_scaling_actor", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
+        # input and output scaling are always initialized as ones      
+        self.register_parameter(name="input_scaling_critic", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
+        self.register_parameter(name="input_scaling_actor", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
+        self.register_parameter(name="output_scaling_critic", param = nn.Parameter(torch.ones(1), requires_grad=True))
+        self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
+        # trainable weights are initialized randomly between -pi and pi
+        self.register_parameter(name="weights_critic", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
+        self.register_parameter(name="weights_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
 
-            self.register_parameter(name="output_scaling_critic", param = nn.Parameter(torch.ones(1), requires_grad=True))
-            self.register_parameter(name="output_scaling_actor", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
-
-            if self.init_method == "uniform":
-                self.register_parameter(name="variational_critic", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
-                self.register_parameter(name="variational_actor", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi, requires_grad=True))
-            else:
-                raise ValueError("Invalid initialization method")
-        
-        self.measured_qubits = torch.randint(low = 0, high = self.num_qubits, size = (self.num_layers,2), requires_grad = False)
-
-        dev = qml.device(config["device"], wires = self.wires)
-        if self.ansatz == "hea":
-            self.qc = qml.QNode(hea, dev, diff_method = config["diff_method"], interface = "torch")
+        device = qml.device(config["device"], wires = self.wires)
+        self.quantum_circuit = qml.QNode(hardware_efficient_ansatz, device, diff_method = config["diff_method"], interface = "torch")
         
     def get_value(self,x):
-        return self._parameters["output_scaling_critic"] * self.qc(x, 
+        return self._parameters["output_scaling_critic"] * self.quantum_circuit(x, 
                          self._parameters["input_scaling_actor"], 
-                         self._parameters["variational_actor"], 
+                         self._parameters["weights_actor"], 
                          self.wires, 
                          self.num_layers, 
-                         "critic", 
-                         self.observables)
+                         "critic")
+        
 
     def get_action_and_value(self, x, action=None):
-        logits = self.qc(x, 
+        logits = self.quantum_circuit(x, 
                          self._parameters["input_scaling_actor"], 
-                         self._parameters["variational_actor"], 
+                         self._parameters["weights_critic"], 
                          self.wires, 
                          self.num_layers, 
-                         "actor", 
-                         self.observables)
+                         "actor")
         
         logits = torch.stack((logits[0], logits[1]), dim=1)
         logits_scaled = logits * self._parameters["output_scaling_actor"]
         probs = Categorical(logits=logits_scaled)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self._parameters["output_scaling_critic"] * self.qc(x, 
+        return action, probs.log_prob(action), probs.entropy(), self._parameters["output_scaling_critic"] * self.quantum_circuit(x, 
                          self._parameters["input_scaling_actor"], 
-                         self._parameters["variational_actor"], 
+                         self._parameters["weights_critic"], 
                          self.wires, 
                          self.num_layers, 
-                         "critic", 
-                         self.observables)
+                         "critic")
 
 
 def ppo_quantum(config):
@@ -102,7 +118,7 @@ def ppo_quantum(config):
     target_kl = config["target_kl"]
     max_grad_norm = config["max_grad_norm"]
     lr_input_scaling = config["lr_input_scaling"]
-    lr_variational = config["lr_variational"]
+    lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
 
     if target_kl == "None":
@@ -133,8 +149,8 @@ def ppo_quantum(config):
         {"params": agent._parameters["input_scaling_actor"], "lr": lr_input_scaling},
         {"params": agent._parameters["output_scaling_critic"], "lr": lr_output_scaling},
         {"params": agent._parameters["output_scaling_actor"], "lr": lr_output_scaling},
-        {"params": agent._parameters["variational_critic"], "lr": lr_variational},
-        {"params": agent._parameters["variational_actor"], "lr": lr_variational}
+        {"params": agent._parameters["weights_critic"], "lr": lr_weights},
+        {"params": agent._parameters["weights_actor"], "lr": lr_weights}
     ])
 
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(device)
