@@ -11,18 +11,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from replay_buffer import ReplayBuffer
+from environments.bandit import MultiArmedBanditEnv
+from environments.maze import MazeEnv
+from environments.tsp import TSPEnv
+from environments.wrapper import *
+
 
 def make_env(env_id, config=None):
     def thunk():
-        env = gym.make(env_id)
+        custom_envs = {
+            "bandit": MultiArmedBanditEnv,  # Add your custom environments here
+            "maze": MazeEnv,
+            'TSP-v1': TSPEnv,
+        }
+
+        env = custom_envs[env_id](config)
+        env = MinMaxNormalizationWrapper(env)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
     return thunk
 
-
 # ALGO LOGIC: initialize agent here:
-class DQNAgentClassical(nn.Module):
+class QNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
         self.network = nn.Sequential(
@@ -65,7 +76,6 @@ def dqn_classical(config: dict):
             f.write("")
 
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
-    assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
@@ -74,9 +84,9 @@ def dqn_classical(config: dict):
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
     assert num_envs == 1, "environment vectorization not possible in DQN"
 
-    q_network = DQNAgentClassical(envs).to(device)
+    q_network = QNetwork(envs).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
-    target_network = DQNAgentClassical(envs).to(device)    
+    target_network = QNetwork(envs).to(device)    
 
     target_network.load_state_dict(q_network.state_dict())
 

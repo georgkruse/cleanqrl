@@ -113,6 +113,7 @@ def dqn_quantum(config):
             f.write("")
 
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
     envs = gym.vector.SyncVectorEnv(

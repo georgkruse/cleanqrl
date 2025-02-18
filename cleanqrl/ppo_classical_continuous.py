@@ -39,7 +39,7 @@ class PPOAgentClassical(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+            layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)*2), std=0.01),
         )
 
     def get_value(self, x):
@@ -47,13 +47,16 @@ class PPOAgentClassical(nn.Module):
 
     def get_action_and_value(self, x, action=None):
         logits = self.actor(x)
-        probs = Categorical(logits=logits)
+        half = logits.shape[1] // 2
+        action_mean, action_std_log = torch.split(logits, half, dim=1)
+        action_std = torch.exp(action_std_log)
+        probs = torch.distributions.Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
 
-def ppo_classical(config):
+def ppo_classical_continuous(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
     num_minibatches = config["num_minibatches"]
@@ -92,7 +95,7 @@ def ppo_classical(config):
         [make_env(env_id) for i in range(num_envs)],
     )
 
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     agent = PPOAgentClassical(envs, config).to(device)  # This is what I need to change to fit quantum into the picture
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate)

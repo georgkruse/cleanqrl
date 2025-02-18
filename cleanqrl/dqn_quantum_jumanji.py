@@ -28,7 +28,6 @@ def make_env(env_id, config=None):
 
         env = custom_envs[env_id](config)
         env = MinMaxNormalizationWrapper(env)
-          
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 

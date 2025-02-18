@@ -28,7 +28,6 @@ class DictWrapper(gym.ObservationWrapper):
 
 
 def make_env(env_id, config=None):
-    
     def thunk():
         custom_envs = {
             "bandit": MultiArmedBanditEnv,  # Add your custom environments here

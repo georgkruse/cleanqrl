@@ -134,6 +134,7 @@ def ppo_quantum(config):
             f.write("")
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
+    assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id) for i in range(num_envs)],

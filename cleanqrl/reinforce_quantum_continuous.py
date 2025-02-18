@@ -55,7 +55,7 @@ class ReinforceAgentQuantum(nn.Module):
         super().__init__()
         self.config = config
         self.num_features = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.num_actions = envs.single_action_space.shape[0]
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)

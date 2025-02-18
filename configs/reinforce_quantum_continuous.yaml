@@ -1,0 +1,32 @@
+tune_config:
+  trial_path: logs
+  trial_name: reinforce_cartpole
+  ray_local_mode: True
+  num_cpus:       4
+  num_gpus:       0
+  ray_num_trial_samples:  1
+  cpus_per_worker:        2
+  gpus_per_worker:        0
+
+algorithm_config:
+  env_id:   "Pendulum-v1"
+  env_wrapper:        minmax
+  agent:              REINFORCE_quantum
+  total_timesteps:    1000
+  lr_input_scaling:   0.001    
+  lr_weights:   0.001    
+  lr_output_scaling:   0.1    
+  num_envs:           1
+  gamma:              0.99
+
+  num_qubits:         4
+  num_layers:         5
+  ansatz:             hea
+  init_method:        uniform
+  observables:        global
+  device:             default.qubit
+  diff_method:        adjoint
+
+
+  cuda: False
+

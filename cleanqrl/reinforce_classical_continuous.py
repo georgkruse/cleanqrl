@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.distributions.categorical import Categorical
 
 def make_env(env_id, config=None):
     def thunk():
@@ -30,16 +29,19 @@ class ReinforceAgentClassical(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+            layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)*2), std=0.01),
         )
 
     def get_action_and_logprob(self, x):
         logits = self.actor(x)
-        probs = Categorical(logits=logits)
+        half = logits.shape[1] // 2
+        action_mean, action_std_log = torch.split(logits, half, dim=1)
+        action_std = torch.exp(action_std_log)
+        probs = torch.distributions.Normal(action_mean, action_std)
         action = probs.sample()
         return action, probs.log_prob(action)
 
-def reinforce_classical(config):
+def reinforce_classical_continuous(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
@@ -58,7 +60,7 @@ def reinforce_classical(config):
         [make_env(env_id) for _ in range(num_envs)],
     )
 
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     # Here, the classical agent is initialized with a Neural Network
     agent = ReinforceAgentClassical(envs).to(device)
