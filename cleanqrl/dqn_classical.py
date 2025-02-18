@@ -118,14 +118,16 @@ def dqn_classical(config: dict):
         obs = next_obs
 
         if len(infos)>0:
-                global_episodes += 1
-                episode_returns.append(int(infos["final_info"][0]["episode"]["r"][0]))
-                global_step_returns.append(global_step)
-                metrics = {
-                    "episodic_return": int(infos["final_info"][0]["episode"]["r"][0]),
-                    "global_step": global_step,
-                    "episode": global_episodes
-                }
+            for info in infos:
+                if info and "episode" in info:
+                    global_episodes +=1
+                    episode_returns.append(float(info["episode"]["r"]))
+                    global_step_returns.append(global_step)
+                    metrics = {
+                        "episodic_return": float(info["episode"]["r"]),
+                        "global_step": global_step,
+                        "episode": global_episodes
+                    }
             
 
 
