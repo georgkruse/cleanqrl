@@ -10,8 +10,8 @@ tune_config:
   gpus_per_worker:        0
 
 algorithm_config:
-  env_id:   "CartPole-v1"
-  agent:               PPO_classical
+  env_id:   "Pendulum-v1"
+  agent:               PPO_classical_continuous
   total_timesteps:    1000000
   learning_rate:      0.001    # only if model is classical
   num_envs:           2

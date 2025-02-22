@@ -9,7 +9,7 @@ tune_config:
   gpus_per_worker:        0
 
 algorithm_config:
-  env_id:   "CartPole-v1"
+  env_id:   "Pendulum-v1"
   env_wrapper:        minmax
   agent:              REINFORCE_quantum
   total_timesteps:    1000

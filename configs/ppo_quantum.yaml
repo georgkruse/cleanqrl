@@ -10,10 +10,11 @@ tune_config:
 
 algorithm_config:
   env_id:   "CartPole-v1"
+  env_wrapper:        minmax
   agent:               PPO_quantum
   total_timesteps:    1000000
   learning_rate:      0.001    # only if model is classical
-  num_envs:           1
+  num_envs:           2
   num_steps:          128
   anneal_lr:          True
   gamma:              0.99
@@ -29,7 +30,7 @@ algorithm_config:
   target_kl:          None
 
   lr_input_scaling:   0.001    
-  lr_variational:   0.001    
+  lr_weights:   0.001    
   lr_output_scaling:   0.1   
   num_qubits:         4
   num_layers:         5

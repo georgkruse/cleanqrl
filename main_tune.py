@@ -1,12 +1,17 @@
 import os
+import sys
 import ray
 from ray import tune
 import yaml
 import datetime
 import shutil
-from utils.config_utils import generate_config
-from utils.train_utils import train_agent
-from utils.plotting_utils import plot_tune_run
+
+# This is important for the import of the cleanqrl package. Do not delete this line
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleanqrl'))
+
+from cleanqrl_utils.config_utils import generate_config
+from cleanqrl_utils.train_utils import train_agent
+from cleanqrl_utils.plotting_utils import plot_tune_run
 
 if __name__ == "__main__":
     # Specify the path to the config file
