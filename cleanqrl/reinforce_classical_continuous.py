@@ -149,13 +149,13 @@ if __name__ == '__main__':
 
     @dataclass
     class Config:
-        trial_name: str = 'reinforce_classical_classical'  # Name of the trial
+        trial_name: str = 'reinforce_classical_continuous'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         env_id: str = "Pendulum-v1"  # Environment ID
         num_envs: int = 1  # Number of environments
         total_timesteps: int = 100000  # Total number of timesteps
-        gamma: float = 0.99  # discount factor
-        lr: float = 0.01  # Learning rate for network weights
+        gamma: float = 0.95  # discount factor
+        lr: float = 0.0001  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
 
     config = vars(Config())

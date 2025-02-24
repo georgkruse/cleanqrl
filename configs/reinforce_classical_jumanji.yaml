@@ -12,7 +12,7 @@ algorithm_config:
   env_id:   TSP-v1
   agent:              REINFORCE_classical_jumanji
   total_timesteps:    1000
-  learning_rate:      0.001    #
+  lr:      0.001    #
   num_envs:           1
   gamma:              0.99
   cuda: False

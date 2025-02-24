@@ -14,7 +14,7 @@ algorithm_config:
 
   agent:               DQN_classical
   total_timesteps:    1000
-  learning_rate:      0.001
+  lr:      0.001
   num_envs:           1
   buffer_size:        10000
   gamma:              0.99

@@ -50,7 +50,7 @@ def dqn_classical(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
-    learning_rate = config["learning_rate"]
+    lr = config["lr"]
     buffer_size = config["buffer_size"]
     total_timesteps = config["total_timesteps"]
     start_e = config["start_e"]
@@ -79,7 +79,7 @@ def dqn_classical(config: dict):
     assert num_envs == 1, "environment vectorization not possible in DQN"
 
     q_network = DQNAgentClassical(envs).to(device)
-    optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(q_network.parameters(), lr=lr)
     target_network = DQNAgentClassical(envs).to(device)    
 
     target_network.load_state_dict(q_network.state_dict())

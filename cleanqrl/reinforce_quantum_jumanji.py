@@ -60,11 +60,6 @@ def hardware_efficient_ansatz(x, input_scaling_weights, variational_weights, wir
         return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
 
 
-def calculate_a(a,S,L):
-    left_side = np.sin(2 * a * np.pi) / (2 * a * np.pi)
-    right_side = (S * (2 * L - 1) - 2) / (S * (2 * L + 1))
-    return left_side - right_side
-
 class ReinforceAgentQuantum(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
