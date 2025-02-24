@@ -10,7 +10,6 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import pennylane as qml
 
-from ansatzes.hea import hea
 from utils.env_utils import make_env
 
 def calculate_a(a,S,L):

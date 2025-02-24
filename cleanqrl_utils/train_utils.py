@@ -5,6 +5,7 @@ from cleanqrl.dqn_classical import dqn_classical
 from cleanqrl.dqn_quantum import dqn_quantum
 from cleanqrl.reinforce_classical import reinforce_classical
 from cleanqrl.reinforce_classical_continuous import reinforce_classical_continuous
+from cleanqrl.reinforce_classical_jumanji import reinforce_classical_jumanji
 from cleanqrl.reinforce_quantum import reinforce_quantum
 
 from cleanqrl.dqn_quantum_jumanji import dqn_quantum_hamiltonian
@@ -17,6 +18,7 @@ agent_switch = {
     "DQN_quantum": dqn_quantum,
     "REINFORCE_classical": reinforce_classical,
     "REINFORCE_classical_continuous": reinforce_classical_continuous,
+    "REINFORCE_classical_jumanji": reinforce_classical_jumanji,
     "REINFORCE_quantum": reinforce_quantum,
     'DQN_quantum_hamiltonian': dqn_quantum_hamiltonian
 }

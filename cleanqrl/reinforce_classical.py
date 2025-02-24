@@ -2,12 +2,15 @@ import os
 import ray
 import json
 import time
+import yaml
+import datetime
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
+from dataclasses import dataclass
 
 def make_env(env_id, config=None):
     def thunk():
@@ -43,7 +46,7 @@ def reinforce_classical(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
-    learning_rate = config["learning_rate"]
+    lr = config["lr"]
     gamma = config["gamma"]
 
     if not ray.is_initialized():
@@ -62,7 +65,7 @@ def reinforce_classical(config):
 
     # Here, the classical agent is initialized with a Neural Network
     agent = ReinforceAgentClassical(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(agent.parameters(), lr=lr)
 
     global_step = 0
     start_time = time.time()
@@ -70,12 +73,13 @@ def reinforce_classical(config):
     obs = torch.Tensor(obs).to(device)
     global_episodes = 0
     episode_returns = []
-    global_step_returns = []
+    losses = []
 
     while global_step < total_timesteps:
         log_probs = []
         rewards = []
         done = False
+        metrics = {}
 
         # Episode loop
         while not done:
@@ -90,8 +94,7 @@ def reinforce_classical(config):
 
         # Not sure about this?
         global_step += len(rewards) * num_envs
-
-        print("SPS:", int(global_step / (time.time() - start_time)))
+        steps_per_second = int(global_step / (time.time() - start_time))
 
         # Calculate discounted rewards
         discounted_rewards = []
@@ -111,27 +114,61 @@ def reinforce_classical(config):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        
+        # If the episode is finished, report the metrics
+        # Here addtional logging can be added
+        if "episode" in infos:
+            losses.append(float(loss.item()))
+            metrics["loss"] = float(float(loss.item()))
 
-        if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        global_episodes +=1
-                        episode_returns.append(float(info["episode"]["r"][0]))
-                        global_step_returns.append(global_step)
-                        metrics = {
-                            "episodic_return": float(info["episode"]["r"][0]),
-                            "global_step": global_step,
-                            "episode": global_episodes
-                        }
+            for idx, finished in enumerate(infos["_episode"]):
+                if finished:
+                    global_episodes +=1
+                    episode_returns.append(float(infos["episode"]["r"][idx]))
+                    metrics["episodic_return"] = float(infos["episode"]["r"][idx])
+                    metrics["global_step"] = global_step
+                    metrics["episode"] = global_episodes             
 
-                # This needs to be placed at the end to include loss loggings
-                if ray.is_initialized():
-                    ray.train.report(metrics=metrics)
-                else:
-                    with open(report_path, "a") as f:
-                        json.dump(metrics, f)
-                        f.write("\n")
+                    if ray.is_initialized():
+                        ray.train.report(metrics=metrics)
+                    else:
+                        with open(report_path, "a") as f:
+                            json.dump(metrics, f)
+                            f.write("\n")
 
-        print(f"Global step: {global_step}, Return: {sum(rewards)}, Loss: {loss.item()}")
+        print(f"Global step: {global_step}, " 
+              f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
+              f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}, "
+              f"SPS: {steps_per_second}")
+        
+    envs.close() 
 
-    envs.close()
+if __name__ == '__main__':
+
+    @dataclass
+    class Config:
+        trial_name: str = 'reinforce_classical'  # Name of the trial
+        trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+        env_id: str = "CartPole-v1"  # Environment ID
+        num_envs: int = 1  # Number of environments
+        total_timesteps: int = 100000  # Total number of timesteps
+        gamma: float = 0.99  # discount factor
+        lr: float = 0.01  # Learning rate for network weights
+        cuda: bool = False  # Whether to use CUDA
+
+    config = vars(Config())
+    
+    # Based on the current time, create a unique name for the experiment
+    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
+    path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
+    config['path'] = path
+
+    # Create the directory and save a copy of the config file so 
+    # that the experiment can be replicated
+    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
+    config_path = os.path.join(path, 'config.yml')
+    with open(config_path, 'w') as file:
+        yaml.dump(config, file)
+
+    # Start the agent training 
+    reinforce_classical(config)    

@@ -1,20 +1,21 @@
-# This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
 import os
 import ray
 import json
-import yaml
-import random
 import time
+import yaml
+import datetime
 import gymnasium as gym
 import numpy as np
-import datetime
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-import pennylane as qml
+from torch.distributions.categorical import Categorical
 from dataclasses import dataclass
-from replay_buffer import ReplayBuffer
+import pennylane as qml
+from environments.bandit import MultiArmedBanditEnv
+from environments.maze import MazeEnv
+from environments.tsp import TSPEnv
+from environments.wrapper import *
 
 
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
@@ -24,12 +25,19 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
 
 def make_env(env_id, config=None):
     def thunk():
-        env = gym.make(env_id)
-        env = ArctanNormalizationWrapper(env)       
+        custom_envs = {
+            "bandit": MultiArmedBanditEnv,  # Add your custom environments here
+            "maze": MazeEnv,
+            'TSP-v1': TSPEnv,
+        }
+
+        env = custom_envs[env_id](config)
+        # env = MinMaxNormalizationWrapper(env)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
     return thunk
+
 
 
 def hardware_efficient_ansatz(x, input_scaling_weights, variational_weights, wires, layers, num_actions):
@@ -51,13 +59,14 @@ def hardware_efficient_ansatz(x, input_scaling_weights, variational_weights, wir
         # TODO: make observation dependent on num_actions
         return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
 
+
 def calculate_a(a,S,L):
     left_side = np.sin(2 * a * np.pi) / (2 * a * np.pi)
     right_side = (S * (2 * L - 1) - 2) / (S * (2 * L + 1))
     return left_side - right_side
 
-class DQNAgentQuantum(nn.Module):
-    def __init__(self,envs,config):
+class ReinforceAgentQuantum(nn.Module):
+    def __init__(self, envs, config):
         super().__init__()
         self.config = config
         self.num_features = np.array(envs.single_observation_space.shape).prod()
@@ -75,34 +84,29 @@ class DQNAgentQuantum(nn.Module):
         device = qml.device(config["device"], wires = self.wires)
         self.quantum_circuit = qml.QNode(hardware_efficient_ansatz, device, diff_method = config["diff_method"], interface = "torch")
         
-    def forward(self, x):
+    def get_action_and_logprob(self, x):
         x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
-        logits = self.quantum_circuit(x, self._parameters["input_scaling"], self._parameters["weights"], self.wires, self.num_layers, self.num_actions)
+        logits = self.quantum_circuit(x, 
+                         self._parameters["input_scaling"], 
+                         self._parameters["weights"], 
+                         self.wires, 
+                         self.num_layers, 
+                         self.num_actions)
+        
         if type(logits) == list:
             logits = torch.stack(logits, dim = 1)
         logits_scaled = logits * self._parameters["output_scaling"]
-        return logits_scaled
-
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
+        probs = Categorical(logits=logits_scaled)
+        action = probs.sample()
+        return action, probs.log_prob(action)
 
 
-def dqn_quantum(config):
+def reinforce_quantum_jumanji(config):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
-    buffer_size = config["buffer_size"]
     total_timesteps = config["total_timesteps"]
-    start_e = config["start_e"]
-    end_e = config["end_e"]
-    exploration_fraction = config["exploration_fraction"]
-    learning_starts = config["learning_starts"]
-    train_frequency = config["train_frequency"]
-    batch_size = config["batch_size"]
     gamma = config["gamma"]
-    target_network_frequency = config["target_network_frequency"]
-    tau = config["tau"]
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
@@ -112,94 +116,75 @@ def dqn_quantum(config):
         with open(report_path, "w") as f:
             f.write("")
 
-    device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
-    # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id,config) for i in range(num_envs)]
+        [make_env(env_id) for _ in range(num_envs)],
     )
+
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
-    assert num_envs == 1, "environment vectorization not possible in DQN"
 
-
-    q_network = DQNAgentQuantum(envs, config).to(device)
+    agent = ReinforceAgentQuantum(envs, config).to(device)
     optimizer = optim.Adam([
-        {"params": q_network._parameters["input_scaling"], "lr": lr_input_scaling},
-        {"params": q_network._parameters["output_scaling"], "lr": lr_output_scaling},
-        {"params": q_network._parameters["weights"], "lr": lr_weights}
+        {"params": agent._parameters["input_scaling"], "lr": lr_input_scaling},
+        {"params": agent._parameters["output_scaling"], "lr": lr_output_scaling},
+        {"params": agent._parameters["weights"], "lr": lr_weights}
     ])
 
-    target_network = DQNAgentQuantum(envs, config).to(device)
-    target_network.load_state_dict(q_network.state_dict())
-
-    rb = ReplayBuffer(
-        buffer_size,
-        envs.single_observation_space,
-        envs.single_action_space,
-        device,
-        handle_timeout_termination=False,
-    )
-    start_time = time.time()
-
-    # global parameters to log
     global_step = 0
+    start_time = time.time()
+    obs, _ = envs.reset()
+    obs = torch.Tensor(obs).to(device)
     global_episodes = 0
-    global_circuit_executions = 0
-    steps_per_eposide = 0
     episode_returns = []
     losses = []
 
-    # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset()
-    for global_step in range(total_timesteps):
-        # ALGO LOGIC: put action logic here
-        epsilon = linear_schedule(start_e, end_e, exploration_fraction * total_timesteps, global_step)
-        if random.random() < epsilon:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
-        else:
-            q_values = q_network(torch.Tensor(obs).to(device))
-            actions = torch.argmax(q_values, dim=1).cpu().numpy()
+    while global_step < total_timesteps:
+        log_probs = []
+        rewards = []
+        done = False
+        metrics = {}
 
-        # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
-        real_next_obs = next_obs.copy()
-        # for idx, trunc in enumerate(truncations):
-        #     if trunc:
-        #         real_next_obs[idx] = infos["final_observation"][idx]
-        rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+        # Episode loop
+        while not done:
+            action, log_prob = agent.get_action_and_logprob(obs)
+            log_probs.append(log_prob)
+            obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            rewards.append(reward)
+            obs = torch.Tensor(obs).to(device)
+            done = np.any(terminations) or np.any(truncations)
 
-        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        obs = next_obs
-        metrics = {} 
-        # ALGO LOGIC: training.
-        if global_step > learning_starts:
-            if global_step % train_frequency == 0:
-                data = rb.sample(batch_size)
-                with torch.no_grad():
-                    target_max, _ = target_network(data.next_observations).max(dim=1)
-                    td_target = data.rewards.flatten() + gamma * target_max * (1 - data.dones.flatten())
-                old_val = q_network(data.observations).gather(1, data.actions).squeeze()
-                loss = F.mse_loss(td_target, old_val)
+        global_episodes +=1
 
-                # optimize the model
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+        global_step += len(rewards) * num_envs
+        steps_per_second = int(global_step / (time.time() - start_time))
 
-                losses.append(float(loss.item()))
-                metrics["loss"] = float(loss.item())
+        # Calculate discounted rewards
+        discounted_rewards = []
+        cumulative_reward = 0
+        for reward in reversed(rewards):
+            cumulative_reward = reward + gamma * cumulative_reward
+            discounted_rewards.insert(0, cumulative_reward)
 
-            # update target network
-            if global_step % target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), q_network.parameters()):
-                    target_network_param.data.copy_(
-                        tau * q_network_param.data + (1.0 - tau) * target_network_param.data
-                    )
-        
+        # Normalize rewards
+        discounted_rewards = torch.tensor(discounted_rewards).to(device)
+        discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (discounted_rewards.std() + 1e-9)
+
+        # Calculate policy gradient loss
+        loss = torch.cat([-log_prob * Gt for log_prob, Gt in zip(log_probs, discounted_rewards)]).sum()
+
+        # Update the policy
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # If the episode is finished, report the metrics
+        # Here addtional logging can be added
         if "episode" in infos:
+            losses.append(float(loss.item()))
+            metrics["loss"] = float(float(loss.item()))
+
             for idx, finished in enumerate(infos["_episode"]):
                 if finished:
                     global_episodes +=1
@@ -215,34 +200,24 @@ def dqn_quantum(config):
                             json.dump(metrics, f)
                             f.write("\n")
         
-        if global_episodes >= 1:
-            if global_step % 100 == 0:
-                print(f"Global step: {global_step}, " 
-                      f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
-                      f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}")
+        print(f"Global step: {global_step}, " 
+              f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
+              f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}, "
+              f"SPS: {steps_per_second}")
+        
     envs.close()
-
 
 
 if __name__ == '__main__':
 
     @dataclass
     class Config:
-        trial_name: str = 'dqn_quantum'  # Name of the trial
+        trial_name: str = 'reinforce_quantum_jumanji'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
-        env_id: str = "CartPole-v1"  # Environment ID
+        env_id: str = "TSP-v1"  # Environment ID
         num_envs: int = 1  # Number of environments
-        buffer_size: int = 10000  # Size of the replay buffer
-        total_timesteps: int = 10000  # Total number of timesteps
-        start_e: float = 1.0  # Starting value of epsilon for exploration
-        end_e: float = 0.01  # Ending value of epsilon for exploration
-        exploration_fraction: float = 0.1  # Fraction of total timesteps for exploration
-        learning_starts: int = 1000  # Timesteps before learning starts
-        train_frequency: int = 1  # Frequency of training
-        batch_size: int = 32  # Batch size for training
-        gamma: float = 0.99  # Discount factor
-        target_network_frequency: int = 100  # Frequency of target network updates
-        tau: float = 0.01  # Soft update coefficient
+        total_timesteps: int = 100000  # Total number of timesteps
+        gamma: float = 0.99  # discount factor
         lr_input_scaling: float = 0.01  # Learning rate for input scaling
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
@@ -253,7 +228,7 @@ if __name__ == '__main__':
         diff_method: str = "backprop"  # Differentiation method
 
     config = vars(Config())
-
+    
     # Based on the current time, create a unique name for the experiment
     name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
     path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
@@ -267,5 +242,4 @@ if __name__ == '__main__':
         yaml.dump(config, file)
 
     # Start the agent training 
-    dqn_quantum(config)    
-
+    reinforce_quantum_jumanji(config)    

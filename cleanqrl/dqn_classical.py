@@ -2,15 +2,19 @@
 import os
 import ray
 import json
+import yaml
 import random
 import time
 import gymnasium as gym
 import numpy as np
+import datetime
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from dataclasses import dataclass
 from replay_buffer import ReplayBuffer
+
 
 def make_env(env_id, config=None):
     def thunk():
@@ -88,10 +92,9 @@ def dqn_classical(config: dict):
         handle_timeout_termination=False,
     )
     start_time = time.time()
-
     global_episodes = 0
     episode_returns = []
-    global_step_returns = []
+    losses = []
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset()
@@ -117,24 +120,8 @@ def dqn_classical(config: dict):
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
-
-        if len(infos)>0:
-            for info in infos:
-                if info and "episode" in info:
-                    global_episodes +=1
-                    episode_returns.append(float(info["episode"]["r"]))
-                    global_step_returns.append(global_step)
-                    metrics = {
-                        "episodic_return": float(info["episode"]["r"]),
-                        "global_step": global_step,
-                        "episode": global_episodes
-                    }
-            
-
-
-        if global_episodes >= 100:
-            if global_step % 1000 == 0:
-                print(np.mean(episode_returns[-10:]))
+        
+        metrics = {}
 
         # ALGO LOGIC: training.
         if global_step > learning_starts:
@@ -146,13 +133,13 @@ def dqn_classical(config: dict):
                 old_val = q_network(data.observations).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
-                if global_step % 20 == 0:
-                    print("SPS:", int(global_step / (time.time() - start_time)))
-
                 # optimize the model
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+                losses.append(float(loss.item()))
+                metrics["loss"] = float(loss.item())
 
             # update target network
             if global_step % target_network_frequency == 0:
@@ -161,13 +148,68 @@ def dqn_classical(config: dict):
                         tau * q_network_param.data + (1.0 - tau) * target_network_param.data
                     )
 
-            metrics["loss"] = loss.item()
 
-        if (global_step > learning_starts and global_step % train_frequency == 0) or "episode" in infos:
-            if ray.is_initialized():
-                ray.train.report(metrics=metrics)
-            else:
-                with open(report_path, "a") as f:
-                    json.dump(metrics, f)
-                    f.write("\n")    
+        if "episode" in infos:
+            for idx, finished in enumerate(infos["_episode"]):
+                if finished:
+                    global_episodes +=1
+                    episode_returns.append(float(infos["episode"]["r"][idx]))
+                    metrics["episodic_return"] = float(infos["episode"]["r"][idx])
+                    metrics["global_step"] = global_step
+                    metrics["episode"] = global_episodes             
+
+                    if ray.is_initialized():
+                        ray.train.report(metrics=metrics)
+                    else:
+                        with open(report_path, "a") as f:
+                            json.dump(metrics, f)
+                            f.write("\n")
+        
+
+        if global_episodes >= 1:
+            if global_step % 100 == 0:
+                print(f"Global step: {global_step}, " 
+                      f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
+                      f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}")
     envs.close()
+
+
+if __name__ == '__main__':
+
+    @dataclass
+    class Config:
+        trial_name: str = 'dqn_classical'  # Name of the trial
+        trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+        env_id: str = "CartPole-v1"  # Environment ID
+        num_envs: int = 1  # Number of environments
+        buffer_size: int = 10000  # Size of the replay buffer
+        total_timesteps: int = 100000  # Total number of timesteps
+        start_e: float = 1.0  # Starting value of epsilon for exploration
+        end_e: float = 0.01  # Ending value of epsilon for exploration
+        exploration_fraction: float = 0.1  # Fraction of total timesteps for exploration
+        learning_starts: int = 1000  # Timesteps before learning starts
+        train_frequency: int = 1  # Frequency of training
+        batch_size: int = 32  # Batch size for training
+        gamma: float = 0.99  # Discount factor
+        target_network_frequency: int = 100  # Frequency of target network updates
+        tau: float = 0.01  # Soft update coefficient
+        lr: float = 0.01  # Learning rate for network weights
+        cuda: bool = False  # Whether to use CUDA
+
+
+    config = vars(Config())
+    
+    # Based on the current time, create a unique name for the experiment
+    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
+    path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
+    config['path'] = path
+
+    # Create the directory and save a copy of the config file so 
+    # that the experiment can be replicated
+    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
+    config_path = os.path.join(path, 'config.yml')
+    with open(config_path, 'w') as file:
+        yaml.dump(config, file)
+
+    # Start the agent training 
+    dqn_classical(config)    

@@ -2,12 +2,15 @@ import os
 import ray
 import json
 import time
+import yaml 
+import datetime
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
+from dataclasses import dataclass
 import pennylane as qml
 
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
@@ -86,7 +89,7 @@ class ReinforceAgentQuantum(nn.Module):
         return action, probs.log_prob(action)
 
 
-def reinforce_quantum(config):
+def reinforce_quantum_continuous(config):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -108,7 +111,7 @@ def reinforce_quantum(config):
         [make_env(env_id) for _ in range(num_envs)],
     )
 
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     agent = ReinforceAgentQuantum(envs, config).to(device)
     optimizer = optim.Adam([
@@ -123,12 +126,13 @@ def reinforce_quantum(config):
     obs = torch.Tensor(obs).to(device)
     global_episodes = 0
     episode_returns = []
-    global_step_returns = []
+    losses = []
 
     while global_step < total_timesteps:
         log_probs = []
         rewards = []
         done = False
+        metrics = {}
 
         # Episode loop
         while not done:
@@ -142,8 +146,7 @@ def reinforce_quantum(config):
         global_episodes +=1
 
         global_step += len(rewards) * num_envs
-
-        print("SPS:", int(global_step / (time.time() - start_time)))
+        steps_per_second = int(global_step / (time.time() - start_time))
 
         # Calculate discounted rewards
         discounted_rewards = []
@@ -164,26 +167,66 @@ def reinforce_quantum(config):
         loss.backward()
         optimizer.step()
 
-        if len(infos)>0:
-            for info in infos:
-                if info and "episode" in info:
+        # If the episode is finished, report the metrics
+        # Here addtional logging can be added
+        if "episode" in infos:
+            losses.append(float(loss.item()))
+            metrics["loss"] = float(float(loss.item()))
+
+            for idx, finished in enumerate(infos["_episode"]):
+                if finished:
                     global_episodes +=1
-                    episode_returns.append(float(info["episode"]["r"]))
-                    global_step_returns.append(global_step)
-                    metrics = {
-                        "episodic_return": float(info["episode"]["r"]),
-                        "global_step": global_step,
-                        "episode": global_episodes
-                    }
+                    episode_returns.append(float(infos["episode"]["r"][idx]))
+                    metrics["episodic_return"] = float(infos["episode"]["r"][idx])
+                    metrics["global_step"] = global_step
+                    metrics["episode"] = global_episodes             
 
-            # This needs to be placed at the end to include loss loggings
-            if ray.is_initialized():
-                ray.train.report(metrics=metrics)
-            else:
-                with open(report_path, "a") as f:
-                    json.dump(metrics, f)
-                    f.write("\n")
+                    if ray.is_initialized():
+                        ray.train.report(metrics=metrics)
+                    else:
+                        with open(report_path, "a") as f:
+                            json.dump(metrics, f)
+                            f.write("\n")
 
-        print(f"Global step: {global_step}, Return: {sum(rewards)}, Loss: {loss.item()}")
-
+        print(f"Global step: {global_step}, " 
+              f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
+              f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}, "
+              f"SPS: {steps_per_second}")
+        
     envs.close()
+
+if __name__ == '__main__':
+
+    @dataclass
+    class Config:
+        trial_name: str = 'reinforce_quantum_continuous'  # Name of the trial
+        trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+        env_id: str = "Pendulum-v1"  # Environment ID
+        num_envs: int = 1  # Number of environments
+        total_timesteps: int = 100000  # Total number of timesteps
+        gamma: float = 0.99  # discount factor
+        lr_input_scaling: float = 0.01  # Learning rate for input scaling
+        lr_weights: float = 0.01  # Learning rate for variational parameters
+        lr_output_scaling: float = 0.01  # Learning rate for output scaling
+        cuda: bool = False  # Whether to use CUDA
+        num_qubits: int = 4  # Number of qubits
+        num_layers: int = 2  # Number of layers in the quantum circuit
+        device: str = "default.qubit"  # Quantum device
+        diff_method: str = "backprop"  # Differentiation method
+
+    config = vars(Config())
+    
+    # Based on the current time, create a unique name for the experiment
+    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
+    path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
+    config['path'] = path
+
+    # Create the directory and save a copy of the config file so 
+    # that the experiment can be replicated
+    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
+    config_path = os.path.join(path, 'config.yml')
+    with open(config_path, 'w') as file:
+        yaml.dump(config, file)
+
+    # Start the agent training 
+    reinforce_quantum_continuous(config)    
