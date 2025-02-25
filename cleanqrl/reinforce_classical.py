@@ -150,7 +150,7 @@ if __name__ == '__main__':
         trial_name: str = 'reinforce_classical'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         env_id: str = "CartPole-v1"  # Environment ID
-        num_envs: int = 1  # Number of environments
+        num_envs: int = 2  # Number of environments
         total_timesteps: int = 100000  # Total number of timesteps
         gamma: float = 0.99  # discount factor
         lr: float = 0.01  # Learning rate for network weights

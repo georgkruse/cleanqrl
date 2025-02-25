@@ -13,8 +13,15 @@ from dataclasses import dataclass
 
 def make_env(env_id, config=None):
     def thunk():
+
         env = gym.make(env_id)
+        env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = gym.wrappers.ClipAction(env)
+        env = gym.wrappers.NormalizeObservation(env)
+        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        env = gym.wrappers.NormalizeReward(env, gamma=config['gamma'])
+        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
@@ -28,18 +35,20 @@ class ReinforceAgentClassical(nn.Module):
     def __init__(self, envs):
         super().__init__()
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)*2), std=0.01),
+            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, np.prod(envs.single_action_space.shape)*2),
         )
 
     def get_action_and_logprob(self, x):
         logits = self.actor(x)
         half = logits.shape[1] // 2
-        action_mean, action_std_log = torch.split(logits, half, dim=1)
-        action_std = torch.exp(action_std_log)
+        action_mean, action_logstd = torch.split(logits[:2*half], half, dim=1)
+        # action_mean = self.actor_mean(x)
+        # action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
         probs = torch.distributions.Normal(action_mean, action_std)
         action = probs.sample()
         return action, probs.log_prob(action)
@@ -60,7 +69,7 @@ def reinforce_classical_continuous(config):
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for _ in range(num_envs)],
+        [make_env(env_id, config) for _ in range(num_envs)],
     )
 
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
@@ -152,10 +161,10 @@ if __name__ == '__main__':
         trial_name: str = 'reinforce_classical_continuous'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         env_id: str = "Pendulum-v1"  # Environment ID
-        num_envs: int = 1  # Number of environments
-        total_timesteps: int = 100000  # Total number of timesteps
-        gamma: float = 0.95  # discount factor
-        lr: float = 0.0001  # Learning rate for network weights
+        num_envs: int = 2  # Number of environments
+        total_timesteps: int = 200000  # Total number of timesteps
+        gamma: float = 0.9  # discount factor
+        lr: float = 0.001  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
 
     config = vars(Config())

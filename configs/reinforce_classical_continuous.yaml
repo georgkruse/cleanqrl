@@ -1,19 +1,25 @@
 tune_config:
   trial_path: logs
-  trial_name: reinforce_cartpole
-  ray_local_mode: True
+  trial_name: reinforce_pendulum
+  ray_local_mode: False
   num_cpus:       4
-  num_gpus:       0
-  ray_num_trial_samples:  1
-  cpus_per_worker:        2
+  num_gpus:               0
+  ray_num_trial_samples:  2
+  cpus_per_worker:        1
   gpus_per_worker:        0
 
 algorithm_config:
-  env_id:   "Pendulum-v1"
-  agent:              REINFORCE_classical_continuous
-  total_timesteps:    1000
-  lr:      0.001    #
-  num_envs:           1
-  gamma:              0.99
+  env_id:                 Pendulum-v1
+  agent:                  REINFORCE_classical_continuous
+  total_timesteps:        100000
+  lr:                     #0.001
+    - grid_search
+    - float
+    - [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]    #
+  num_envs:           2
+  gamma:       #0.9       
+    - grid_search
+    - float
+    - [0.9, 0.95, 0.98, 0.99]
   cuda: False
 

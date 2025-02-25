@@ -138,28 +138,29 @@ def ppo_classical(config):
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
+            metrics = {}
+            # If the episode is finished, report the metrics
+            # Here addtional logging can be added
+            if "episode" in infos:
+                # losses.append(float(loss.item()))
+                # metrics["loss"] = float(float(loss.item()))
+
+                for idx, finished in enumerate(infos["_episode"]):
+                    if finished:
                         global_episodes +=1
-                        episode_returns.append(float(info["episode"]["r"][0]))
-                        global_step_returns.append(global_step)
-                        metrics = {
-                            "episodic_return": float(info["episode"]["r"][0]),
-                            "global_step": global_step,
-                            "episode": global_episodes
-                        }
+                        episode_returns.append(float(infos["episode"]["r"][idx]))
+                        metrics["episodic_return"] = float(infos["episode"]["r"][idx])
+                        metrics["global_step"] = global_step
+                        metrics["episode"] = global_episodes             
 
-                # This needs to be placed at the end to include loss loggings
-                if ray.is_initialized():
-                    ray.train.report(metrics=metrics)
-                else:
-                    with open(report_path, "a") as f:
-                        json.dump(metrics, f)
-                        f.write("\n")
-
-            if global_episodes >= 100:
-                if global_step % 1000 == 0:
+                        if ray.is_initialized():
+                            ray.train.report(metrics=metrics)
+                        else:
+                            with open(report_path, "a") as f:
+                                json.dump(metrics, f)
+                                f.write("\n")
+            if global_episodes >= 10:
+                if global_step % 100 == 0:
                     print(np.mean(episode_returns[-10:]))
 
 
@@ -245,6 +246,6 @@ def ppo_classical(config):
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        print("SPS:", int(global_step / (time.time() - start_time)))
+        # print("SPS:", int(global_step / (time.time() - start_time)))
 
     envs.close()

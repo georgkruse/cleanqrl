@@ -1,3 +1,11 @@
+import os
+import sys 
+
+# This is important for the import of the cleanqrl package. Do not delete this line
+repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(repo_path)
+sys.path.append(os.path.join(repo_path, 'cleanqrl'))
+
 from cleanqrl.ppo_classical import ppo_classical
 from cleanqrl.ppo_classical_continuous import ppo_classical_continuous
 from cleanqrl.ppo_quantum import ppo_quantum
@@ -24,7 +32,7 @@ agent_switch = {
     "REINFORCE_classical_jumanji": reinforce_classical_jumanji,
     "REINFORCE_quantum": reinforce_quantum,
     "REINFORCE_quantum_continuous": reinforce_quantum_continuous,
-    "REINFORCE_quantum_jumanji": reinforce_quantum_jumanji,
+    "REINFORCE_quantum": reinforce_quantum_jumanji,
     
 }
 
