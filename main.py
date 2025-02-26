@@ -14,7 +14,7 @@ from cleanqrl_utils.plotting_utils import plot_single_run
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = 'configs/ppo_classical_continuous.yaml'
+    config_path = 'configs/reinforce_classical_continuous.yaml'
 
     # Load the config file 
     with open(config_path) as f:
@@ -25,19 +25,18 @@ if __name__ == "__main__":
     tune_config = config['tune_config']
     
     # Based on the current time, create a unique name for the experiment
-    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + tune_config['trial_name']
-    path = os.path.join(os.getcwd(), tune_config['trial_path'], name)
-    parameter_config['path'] = path
+    parameter_config['trial_name'] = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + tune_config["trial_name"]
+    parameter_config['path'] = os.path.join(os.path.dirname(os.getcwd()), tune_config["trial_path"], parameter_config['trial_name'])
 
     # Create the directory and save a copy of the config file so 
     # that the experiment can be replicated
-    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
-    shutil.copy(config_path, path + '/config.yml')
+    os.makedirs(os.path.dirname(parameter_config['path'] + '/'), exist_ok=True)
+    shutil.copy(config_path, os.path.join(parameter_config['path'], 'config.yaml'))
 
     # Start the agent training 
     train_agent(parameter_config)
     # Plot the results of the training
-    plot_single_run(path)
+    # plot_single_run(config['path'])
 
 
 

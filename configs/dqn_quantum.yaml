@@ -39,4 +39,5 @@ algorithm_config:
   
 
   cuda: False
-
+  save_model: True
+  wandb: True

@@ -2,7 +2,7 @@
 import os
 import ray
 import json
-import random
+import wandb
 import time
 import yaml
 from ray import tune
@@ -17,8 +17,7 @@ import torch.optim as optim
 from torch.distributions.normal import Normal
 from ray.train._internal.session import get_session
 
-import wandb
-def make_env(env_id, gamma):
+def make_env(env_id, config):
     def thunk():
 
         env = gym.make(env_id)
@@ -27,49 +26,59 @@ def make_env(env_id, gamma):
         env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.NormalizeObservation(env)
         # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+        env = gym.wrappers.NormalizeReward(env, gamma=config['gamma'])
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-
 class Agent(nn.Module):
     def __init__(self, envs):
         super().__init__()
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
         )
         self.actor_mean = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)), std=0.01),
+            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, np.prod(envs.single_action_space.shape))
         )
+        # self.actor_mean = nn.Linear(64, np.prod(envs.single_action_space.shape))
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
-
+        # self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
+    
     def get_value(self, x):
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None):
-        action_mean = self.actor_mean(x)
+        # features = self.actor_shared(x)
+        action_mean = self.actor_mean(x) 
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
+        # action_logstd = self.actor_logstd(features)
+        # action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+
+
+def log_metrics(config, metrics, report_path=None):
+    if config['wandb']:
+        wandb.log(metrics)
+    if ray.is_initialized():
+        ray.train.report(metrics=metrics)
+    else:
+        with open(os.path.join(report_path, 'result.json'), "a") as f:
+            json.dump(metrics, f)
+            f.write("\n")
 
 
 def ppo_classical_continuous(config):
@@ -91,7 +100,6 @@ def ppo_classical_continuous(config):
     vf_coef = config["vf_coef"]
     target_kl = config["target_kl"]
     max_grad_norm = config["max_grad_norm"]
-    seed = config["seed"]
     cuda = config["cuda"]
 
     if target_kl == "None":
@@ -102,40 +110,39 @@ def ppo_classical_continuous(config):
     num_iterations = total_timesteps // batch_size
     
     if not ray.is_initialized():
-        report_path = os.path.join(config["path"], "result.json")
+        report_path = config["path"]
         name = config['trial_name']
-        with open(report_path, "w") as f:
+        with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
     else:
         session = get_session()
         report_path = session.storage.trial_fs_path 
         name = session.trial_id
-    print('shfaskdflksahfslkjdf', name)
-    wandb.init(
-        project='cleanqrl',
-        sync_tensorboard=True,
-        config=config,
-        name=name,
-        monitor_gym=True,
-        save_code=True,
-        dir=report_path
-    )
+
+    if config['wandb']:
+        wandb.init(
+            project='cleanqrl',
+            sync_tensorboard=True,
+            config=config,
+            name=name,
+            monitor_gym=True,
+            save_code=True,
+            dir=report_path
+        )
     
-    batch_size = int(num_envs * num_steps)
-    minibatch_size = int(batch_size // num_minibatches)
-    num_iterations = total_timesteps // batch_size
-
-
     # TRY NOT TO MODIFY: seeding
-    # random.seed(seed)
-    # np.random.seed(seed)
-    # torch.manual_seed(seed)
+    # if 'seed' in config.keys():
+    #     random.seed(seed)
+    #     np.random.seed(seed)
+    #     torch.manual_seed(seed)
+    seed = np.random.randint(0,1e9)
 
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, gamma) for i in range(num_envs)]
+        [make_env(env_id, config) for i in range(num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
@@ -156,6 +163,8 @@ def ppo_classical_continuous(config):
     next_obs, _ = envs.reset(seed=seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(num_envs).to(device)
+    global_episodes = 0
+    episode_returns = []
 
     for iteration in range(1, num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -183,23 +192,19 @@ def ppo_classical_continuous(config):
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
             if "episode" in infos:
-                print(infos['episode']['r'])
-                print(global_step)
-                metrics = {}
-                metrics['episodic_return'] = infos['episode']['r']
-                metrics['episodic_length'] = infos['episode']['l']
-                metrics['global_step'] = global_step
-                wandb.log(metrics)
-                if ray.is_initialized():
-                    ray.train.report(metrics=metrics)
-                else:
-                    with open(report_path, "a") as f:
-                        json.dump(metrics, f)
-                        f.write("\n")
-                          
-                        # print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        # writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                for idx, finished in enumerate(infos["_episode"]):
+                    if finished:
+                        metrics = {}
+                        global_episodes +=1
+                        episode_returns.append(infos['episode']['r'].tolist()[idx])
+                        metrics['episodic_return'] = infos['episode']['r'].tolist()[idx]
+                        metrics['episodic_length'] = infos['episode']['l'].tolist()[idx]
+                        metrics['global_step'] = global_step
+                        log_metrics(config, metrics, report_path)
+            if global_episodes > 10 and not ray.is_initialized():
+                if global_step % 100 == 0:
+                    print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-10:]))
+                       
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
@@ -292,114 +297,54 @@ def ppo_classical_continuous(config):
         metrics["clipfrac"] = np.mean(clipfracs)
         metrics["explained_variance"] = np.mean(explained_var)
         metrics["SPS"] = int(global_step / (time.time() - start_time))
-        
-        wandb.log(metrics)
-        if ray.is_initialized():
-            ray.train.report(metrics=metrics)
-        else:
-            with open(report_path, "a") as f:
-                json.dump(metrics, f)
-                f.write("\n")
-        # writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        # writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        # writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        # writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        # writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        # writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        # writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        # writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        # print("SPS:", int(global_step / (time.time() - start_time)))
-        # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        log_metrics(config, metrics, report_path)        
 
-
+    if config['save_model']:
+        model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
+        torch.save(agent.state_dict(), model_path)
+        print(f"model saved to {model_path}")
 
     envs.close()
-    # writer.close()
+    if config['wandb']:
+        wandb.finish()
+
 
 if __name__ == "__main__":
     
     @dataclass
     class Config:
-        trial_name: str = 'ppo_classical'  # Name of the trial
+        trial_name: str = 'ppo_classical_continuous'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
-        exp_name: str = os.path.basename(__file__)[: -len(".py")]
-        """the name of this experiment"""
-        seed: int = 1
-        """seed of the experiment"""
-        torch_deterministic: bool = True
-        """if toggled, `torch.backends.cudnn.deterministic=False`"""
-        cuda: bool = True
-        """if toggled, cuda will be enabled by default"""
-        track: bool = False
-        """if toggled, this experiment will be tracked with Weights and Biases"""
-        wandb_project_name: str = "cleanRL"
-        """the wandb's project name"""
-        wandb_entity: str = None
-        """the entity (team) of wandb's project"""
-        capture_video: bool = False
-        """whether to capture videos of the agent performances (check out `videos` folder)"""
-        save_model: bool = False
-        """whether to save model into the `runs/{run_name}` folder"""
-        upload_model: bool = False
-        """whether to upload the saved model to huggingface"""
-        hf_entity: str = ""
-        """the user or org name of the model repository from the Hugging Face Hub"""
 
         # Algorithm specific arguments
-        env_id: str = "Pendulum-v1"
-        """the id of the environment"""
-        total_timesteps: int = 1000000
-        """total timesteps of the experiments"""
-        learning_rate: float = 3e-4
-        """the learning rate of the optimizer"""
-        num_envs: int = 1
-        """the number of parallel game environments"""
-        num_steps: int = 2048
-        """the number of steps to run in each environment per policy rollout"""
-        anneal_lr: bool = True
-        """Toggle learning rate annealing for policy and value networks"""
-        gamma: float = 0.9
-        """the discount factor gamma"""
-        gae_lambda: float = 0.95
-        """the lambda for the general advantage estimation"""
-        num_minibatches: int = 32
-        """the number of mini-batches"""
-        update_epochs: int = 10
-        """the K epochs to update the policy"""
-        norm_adv: bool = True
-        """Toggles advantages normalization"""
-        clip_coef: float = 0.2
-        """the surrogate clipping coefficient"""
-        clip_vloss: bool = True
-        """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-        ent_coef: float = 0.0
-        """coefficient of the entropy"""
-        vf_coef: float = 0.5
-        """coefficient of the value function"""
-        max_grad_norm: float = 0.5
-        """the maximum norm for the gradient clipping"""
-        target_kl: float = None
-        """the target KL divergence threshold"""
-
-        # to be filled in runtime
-        batch_size: int = 0
-        """the batch size (computed in runtime)"""
-        minibatch_size: int = 0
-        """the mini-batch size (computed in runtime)"""
-        num_iterations: int = 0
-        """the number of iterations (computed in runtime)"""
+        env_id: str = "Pendulum-v1" # Environment ID
+        total_timesteps: int = 1000000 # Total timesteps for the experiment
+        learning_rate: float = 3e-4 # Learning rate of the optimizer
+        num_envs: int = 1 # Number of parallel environments
+        num_steps: int = 2048 # Steps per environment per policy rollout
+        anneal_lr: bool = True # Toggle for learning rate annealing
+        gamma: float = 0.9 # Discount factor gamma
+        gae_lambda: float = 0.95 # Lambda for general advantage estimation
+        num_minibatches: int = 32 # Number of mini-batches
+        update_epochs: int = 10 # Number of epochs to update the policy
+        norm_adv: bool = True # Toggle for advantages normalization
+        clip_coef: float = 0.2 # Surrogate clipping coefficient
+        clip_vloss: bool = True # Toggle for clipped value function loss
+        ent_coef: float = 0.0 # Entropy coefficient
+        vf_coef: float = 0.5 # Value function coefficient
+        max_grad_norm: float = 0.5 # Maximum gradient norm for clipping
+        target_kl: float = None # Target KL divergence threshold
     
     config = vars(Config())
     
     # Based on the current time, create a unique name for the experiment
-    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
-    path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
-    config['path'] = path
+    config['trial_name'] = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
+    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], config['trial_name'])
 
-    # Create the directory and save a copy of the config file so 
-    # that the experiment can be replicated
-    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
-    config_path = os.path.join(path, 'config.yml')
+    # Create the directory and save a copy of the config file so that the experiment can be replicated
+    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
+    config_path = os.path.join(config['path'], 'config.yml')
     with open(config_path, 'w') as file:
         yaml.dump(config, file)
+
     ppo_classical_continuous(config)

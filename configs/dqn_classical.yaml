@@ -13,7 +13,7 @@ algorithm_config:
 
 
   agent:               DQN_classical
-  total_timesteps:    1000
+  total_timesteps:    10000
   lr:      0.001
   num_envs:           1
   buffer_size:        10000
@@ -26,7 +26,6 @@ algorithm_config:
   exploration_fraction:   0.35
   learning_starts:        100
   train_frequency:        1
-  
-
   cuda: False
-
+  save_model: True
+  wandb: True

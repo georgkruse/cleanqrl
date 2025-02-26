@@ -3,43 +3,50 @@ import os
 import ray
 import json
 import time
+import wandb
+import yaml
+import datetime
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from dataclasses import dataclass
 from torch.distributions.categorical import Categorical
+from ray.train._internal.session import get_session
 
-def make_env(env_id, config=None):
+def make_env(env_id, config):
     def thunk():
+
         env = gym.make(env_id)
+        env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        # env = gym.wrappers.ClipAction(env)
+        env = gym.wrappers.NormalizeObservation(env)
+        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        env = gym.wrappers.NormalizeReward(env, gamma=config['gamma'])
+        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
 
 class PPOAgentClassical(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, envs):
         super().__init__()
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
         )
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, envs.single_action_space.n)
         )
 
     def get_value(self, x):
@@ -52,6 +59,16 @@ class PPOAgentClassical(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
+def log_metrics(config, metrics, report_path=None):
+    if config['wandb']:
+        wandb.log(metrics)
+    if ray.is_initialized():
+        ray.train.report(metrics=metrics)
+    else:
+        with open(os.path.join(report_path, 'result.json'), "a") as f:
+            json.dump(metrics, f)
+            f.write("\n")
+    
 
 def ppo_classical(config):
     num_envs = config["num_envs"]
@@ -81,20 +98,42 @@ def ppo_classical(config):
     num_iterations = total_timesteps // batch_size
     
     if not ray.is_initialized():
-        report_path = os.path.join(config["path"], "result.json")
-        with open(report_path, "w") as f:
+        report_path = config["path"]
+        name = config['trial_name']
+        with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
+    else:
+        session = get_session()
+        report_path = session.storage.trial_fs_path 
+        name = session.trial_id
+    
+    if config['wandb']:
+        wandb.init(
+            project='cleanqrl',
+            sync_tensorboard=True,
+            config=config,
+            name=name,
+            monitor_gym=True,
+            save_code=True,
+            dir=report_path
+        )
+
+    # TRY NOT TO MODIFY: seeding
+    # if 'seed' in config.keys():
+    #     random.seed(seed)
+    #     np.random.seed(seed)
+    #     torch.manual_seed(seed)
+    seed = np.random.randint(0,1e9)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for i in range(num_envs)],
+        [make_env(env_id, config) for i in range(num_envs)],
     )
-
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = PPOAgentClassical(envs, config).to(device)  # This is what I need to change to fit quantum into the picture
+    agent = PPOAgentClassical(envs).to(device)  # This is what I need to change to fit quantum into the picture
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
 
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(device)
@@ -106,12 +145,11 @@ def ppo_classical(config):
 
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset()
+    next_obs, _ = envs.reset(seed=seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(num_envs).to(device)
     global_episodes = 0
     episode_returns = []
-    global_step_returns = []
 
     for iteration in range(1, num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -142,26 +180,18 @@ def ppo_classical(config):
             # If the episode is finished, report the metrics
             # Here addtional logging can be added
             if "episode" in infos:
-                # losses.append(float(loss.item()))
-                # metrics["loss"] = float(float(loss.item()))
-
                 for idx, finished in enumerate(infos["_episode"]):
                     if finished:
+                        metrics = {}
                         global_episodes +=1
-                        episode_returns.append(float(infos["episode"]["r"][idx]))
-                        metrics["episodic_return"] = float(infos["episode"]["r"][idx])
-                        metrics["global_step"] = global_step
-                        metrics["episode"] = global_episodes             
-
-                        if ray.is_initialized():
-                            ray.train.report(metrics=metrics)
-                        else:
-                            with open(report_path, "a") as f:
-                                json.dump(metrics, f)
-                                f.write("\n")
-            if global_episodes >= 10:
+                        episode_returns.append(infos['episode']['r'].tolist()[idx])
+                        metrics['episodic_return'] = infos['episode']['r'].tolist()[idx]
+                        metrics['episodic_length'] = infos['episode']['l'].tolist()[idx]
+                        metrics['global_step'] = global_step
+                        log_metrics(config, metrics, report_path)
+            if global_episodes > 10 and not ray.is_initialized():
                 if global_step % 100 == 0:
-                    print(np.mean(episode_returns[-10:]))
+                    print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-10:]))
 
 
         # bootstrap value if not done
@@ -246,6 +276,64 @@ def ppo_classical(config):
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        # print("SPS:", int(global_step / (time.time() - start_time)))
-
+        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        metrics = {}
+        metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
+        metrics["value_loss"] = v_loss.item()
+        metrics["policy_loss"] = pg_loss.item()
+        metrics["entropy"] = entropy_loss.item()
+        metrics["old_approx_kl"] =  old_approx_kl.item()
+        metrics["approx_kl"] = approx_kl.item()
+        metrics["clipfrac"] = np.mean(clipfracs)
+        metrics["explained_variance"] = np.mean(explained_var)
+        metrics["SPS"] = int(global_step / (time.time() - start_time))
+        log_metrics(config, metrics, report_path)
+        
+    if config['save_model']:
+        model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
+        torch.save(agent.state_dict(), model_path)
+        print(f"model saved to {model_path}")
+        
     envs.close()
+    if config['wandb']:
+        wandb.finish()
+
+if __name__ == "__main__":
+    
+    @dataclass
+    class Config:
+        trial_name: str = 'ppo_classical_continuous'  # Name of the trial
+        trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+
+        # Algorithm specific arguments
+        env_id: str = "Pendulum-v1" # Environment ID
+        total_timesteps: int = 1000000 # Total timesteps for the experiment
+        learning_rate: float = 3e-4 # Learning rate of the optimizer
+        num_envs: int = 1 # Number of parallel environments
+        num_steps: int = 2048 # Steps per environment per policy rollout
+        anneal_lr: bool = True # Toggle for learning rate annealing
+        gamma: float = 0.9 # Discount factor gamma
+        gae_lambda: float = 0.95 # Lambda for general advantage estimation
+        num_minibatches: int = 32 # Number of mini-batches
+        update_epochs: int = 10 # Number of epochs to update the policy
+        norm_adv: bool = True # Toggle for advantages normalization
+        clip_coef: float = 0.2 # Surrogate clipping coefficient
+        clip_vloss: bool = True # Toggle for clipped value function loss
+        ent_coef: float = 0.0 # Entropy coefficient
+        vf_coef: float = 0.5 # Value function coefficient
+        max_grad_norm: float = 0.5 # Maximum gradient norm for clipping
+        target_kl: float = None # Target KL divergence threshold
+
+    config = vars(Config())
+    
+    # Based on the current time, create a unique name for the experiment
+    config['trial_name'] = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
+    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], config['trial_name'])
+
+    # Create the directory and save a copy of the config file so that the experiment can be replicated
+    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
+    config_path = os.path.join(config['path'], 'config.yml')
+    with open(config_path, 'w') as file:
+        yaml.dump(config, file)
+
+    ppo_classical(config)

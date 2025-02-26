@@ -1,22 +1,25 @@
 # This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
 import os
-import ray
-import json
-import yaml
 import random
 import time
+import ray 
+import yaml 
+import datetime
+import json
+import wandb
+from dataclasses import dataclass
+
 import gymnasium as gym
 import numpy as np
-import datetime
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from dataclasses import dataclass
 from replay_buffer import ReplayBuffer
+from ray.train._internal.session import get_session
 
 
-def make_env(env_id, config=None):
+def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -26,15 +29,15 @@ def make_env(env_id, config=None):
 
 
 # ALGO LOGIC: initialize agent here:
-class DQNAgentClassical(nn.Module):
-    def __init__(self, env):
+class QNetwork(nn.Module):
+    def __init__(self, envs):
         super().__init__()
         self.network = nn.Sequential(
-            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
+            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
             nn.ReLU(),
-            nn.Linear(120, 84),
+            nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(84, env.single_action_space.n),
+            nn.Linear(64, envs.single_action_space.n)
         )
 
     def forward(self, x):
@@ -46,11 +49,21 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
+def log_metrics(config, metrics, report_path=None):
+    if config['wandb']:
+        wandb.log(metrics)
+    if ray.is_initialized():
+        ray.train.report(metrics=metrics)
+    else:
+        with open(os.path.join(report_path, 'result.json'), "a") as f:
+            json.dump(metrics, f)
+            f.write("\n")
+
+
 def dqn_classical(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
-    lr = config["lr"]
     buffer_size = config["buffer_size"]
     total_timesteps = config["total_timesteps"]
     start_e = config["start_e"]
@@ -62,26 +75,45 @@ def dqn_classical(config: dict):
     gamma = config["gamma"]
     target_network_frequency = config["target_network_frequency"]
     tau = config["tau"]
+    lr = config["lr"]
 
     if not ray.is_initialized():
-        report_path = os.path.join(config["path"], "result.json")
-        with open(report_path, "w") as f:
+        report_path = config["path"]
+        name = config['trial_name']
+        with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
-
+    else:
+        session = get_session()
+        report_path = session.storage.trial_fs_path 
+        name = session.trial_id
+    
+    if config['wandb']:
+        wandb.init(
+            project='cleanqrl',
+            sync_tensorboard=True,
+            config=config,
+            name=name,
+            monitor_gym=True,
+            save_code=True,
+            dir=report_path
+        )
+    # TRY NOT TO MODIFY: seeding
+    # if 'seed' in config.keys():
+    #     random.seed(seed)
+    #     np.random.seed(seed)
+    #     torch.manual_seed(seed)
+    seed = np.random.randint(0,1e9)
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
-    assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id,) for i in range(num_envs)]
+        [make_env(env_id, config) for i in range(num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
-    assert num_envs == 1, "environment vectorization not possible in DQN"
 
-    q_network = DQNAgentClassical(envs).to(device)
+    q_network = QNetwork(envs).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=lr)
-    target_network = DQNAgentClassical(envs).to(device)    
-
+    target_network = QNetwork(envs).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -92,12 +124,12 @@ def dqn_classical(config: dict):
         handle_timeout_termination=False,
     )
     start_time = time.time()
+
+    # global parameters to log
     global_episodes = 0
     episode_returns = []
-    losses = []
-
     # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset()
+    obs, _ = envs.reset(seed=seed)
     for global_step in range(total_timesteps):
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(start_e, end_e, exploration_fraction * total_timesteps, global_step)
@@ -110,18 +142,31 @@ def dqn_classical(config: dict):
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
+        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        if "episode" in infos:
+            for idx, finished in enumerate(infos["_episode"]):
+                if finished:
+                    metrics = {}
+                    global_episodes +=1
+                    episode_returns.append(infos['episode']['r'].tolist()[idx])
+                    metrics['episodic_return'] = infos['episode']['r'].tolist()[idx]
+                    metrics['episodic_length'] = infos['episode']['l'].tolist()[idx]
+                    metrics['global_step'] = global_step
+                    log_metrics(config, metrics, report_path)
+        if global_episodes > 10 and not ray.is_initialized():
+            if global_step % 100 == 0:
+                print('Global step: ', global_step, ', Mean return: ', np.mean(episode_returns[-10:]))
+                       
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
-        # Dont know about this as well?
+        # TODO: Check if this is actually important: see issue #10
         # for idx, trunc in enumerate(truncations):
-            # if trunc:
-            #     real_next_obs[idx] = infos["final_observation"][idx]
+        #     if trunc:
+        #         real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
-        
-        metrics = {}
 
         # ALGO LOGIC: training.
         if global_step > learning_starts:
@@ -133,13 +178,16 @@ def dqn_classical(config: dict):
                 old_val = q_network(data.observations).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
+                if global_step % 100 == 0:
+                    metrics = {}
+                    metrics['td_loss'] = loss.item()
+                    metrics['q_values'] = old_val.mean().item()
+                    metrics['SPS'] = int(global_step / (time.time() - start_time))
+                    log_metrics(config, metrics, report_path)
                 # optimize the model
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-
-                losses.append(float(loss.item()))
-                metrics["loss"] = float(loss.item())
 
             # update target network
             if global_step % target_network_frequency == 0:
@@ -148,31 +196,14 @@ def dqn_classical(config: dict):
                         tau * q_network_param.data + (1.0 - tau) * target_network_param.data
                     )
 
+    if config['save_model']:
+        model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
+        torch.save(q_network.state_dict(), model_path)
+        print(f"model saved to {model_path}")
 
-        if "episode" in infos:
-            for idx, finished in enumerate(infos["_episode"]):
-                if finished:
-                    global_episodes +=1
-                    episode_returns.append(float(infos["episode"]["r"][idx]))
-                    metrics["episodic_return"] = float(infos["episode"]["r"][idx])
-                    metrics["global_step"] = global_step
-                    metrics["episode"] = global_episodes             
-
-                    if ray.is_initialized():
-                        ray.train.report(metrics=metrics)
-                    else:
-                        with open(report_path, "a") as f:
-                            json.dump(metrics, f)
-                            f.write("\n")
-        
-
-        if global_episodes >= 1:
-            if global_step % 100 == 0:
-                print(f"Global step: {global_step}, " 
-                      f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
-                      f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}")
     envs.close()
-
+    if config['wandb']:
+        wandb.finish()
 
 if __name__ == '__main__':
 
@@ -195,19 +226,18 @@ if __name__ == '__main__':
         tau: float = 0.01  # Soft update coefficient
         lr: float = 0.01  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
-
+        save_model: bool = True # Save the model parameters
+        wandb: bool = True # Use wandb to log experiment data
 
     config = vars(Config())
     
     # Based on the current time, create a unique name for the experiment
-    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
-    path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
-    config['path'] = path
+    config['trial_name'] = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
+    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], config['trial_name'])
 
-    # Create the directory and save a copy of the config file so 
-    # that the experiment can be replicated
-    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
-    config_path = os.path.join(path, 'config.yml')
+    # Create the directory and save a copy of the config file so that the experiment can be replicated
+    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
+    config_path = os.path.join(config['path'], 'config.yml')
     with open(config_path, 'w') as file:
         yaml.dump(config, file)
 

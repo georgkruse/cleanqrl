@@ -3,6 +3,7 @@ import ray
 import json
 import time
 import yaml
+import wandb
 import datetime
 import gymnasium as gym
 import numpy as np
@@ -11,6 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
 from dataclasses import dataclass
+from ray.train._internal.session import get_session
 
 def make_env(env_id, config=None):
     def thunk():
@@ -20,27 +22,35 @@ def make_env(env_id, config=None):
 
     return thunk
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
 
 class ReinforceAgentClassical(nn.Module):
     def __init__(self, envs):
         super().__init__()
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+        self.network = nn.Sequential(
+            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, envs.single_action_space.n)
         )
 
     def get_action_and_logprob(self, x):
-        logits = self.actor(x)
+        logits = self.network(x)
         probs = Categorical(logits=logits)
         action = probs.sample()
         return action, probs.log_prob(action)
+
+
+def log_metrics(config, metrics, report_path=None):
+    if config['wandb']:
+        wandb.log(metrics)
+    if ray.is_initialized():
+        ray.train.report(metrics=metrics)
+    else:
+        with open(os.path.join(report_path, 'result.json'), "a") as f:
+            json.dump(metrics, f)
+            f.write("\n")
+
 
 def reinforce_classical(config):
     num_envs = config["num_envs"]
@@ -50,9 +60,25 @@ def reinforce_classical(config):
     gamma = config["gamma"]
 
     if not ray.is_initialized():
-        report_path = os.path.join(config["path"], "result.json")
-        with open(report_path, "w") as f:
+        report_path = config["path"]
+        name = config['trial_name']
+        with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
+    else:
+        session = get_session()
+        report_path = session.storage.trial_fs_path 
+        name = session.trial_id
+
+    if config['wandb']:
+        wandb.init(
+            project='cleanqrl',
+            sync_tensorboard=True,
+            config=config,
+            name=name,
+            monitor_gym=True,
+            save_code=True,
+            dir=report_path
+        )
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
@@ -94,7 +120,6 @@ def reinforce_classical(config):
 
         # Not sure about this?
         global_step += len(rewards) * num_envs
-        steps_per_second = int(global_step / (time.time() - start_time))
 
         # Calculate discounted rewards
         discounted_rewards = []
@@ -118,31 +143,31 @@ def reinforce_classical(config):
         # If the episode is finished, report the metrics
         # Here addtional logging can be added
         if "episode" in infos:
-            losses.append(float(loss.item()))
-            metrics["loss"] = float(float(loss.item()))
-
             for idx, finished in enumerate(infos["_episode"]):
                 if finished:
+                    metrics = {}
                     global_episodes +=1
-                    episode_returns.append(float(infos["episode"]["r"][idx]))
-                    metrics["episodic_return"] = float(infos["episode"]["r"][idx])
-                    metrics["global_step"] = global_step
-                    metrics["episode"] = global_episodes             
+                    episode_returns.append(infos['episode']['r'].tolist()[idx])
+                    metrics['episodic_return'] = infos['episode']['r'].tolist()[idx]
+                    metrics['episodic_length'] = infos['episode']['l'].tolist()[idx]
+                    metrics['global_step'] = global_step
+                    metrics["policy_loss"] = loss.item()
+                    metrics["SPS"] = int(global_step / (time.time() - start_time))
 
-                    if ray.is_initialized():
-                        ray.train.report(metrics=metrics)
-                    else:
-                        with open(report_path, "a") as f:
-                            json.dump(metrics, f)
-                            f.write("\n")
-
-        print(f"Global step: {global_step}, " 
-              f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
-              f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}, "
-              f"SPS: {steps_per_second}")
+                    log_metrics(config, metrics, report_path)
+        if global_episodes > 10 and not ray.is_initialized():
+            if global_step % 100 == 0:
+                print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-10:]))
+                       
+    if config['save_model']:
+        model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
+        torch.save(agent.state_dict(), model_path)
+        print(f"model saved to {model_path}")
         
     envs.close() 
-
+    if config['wandb']:
+        wandb.finish()
+        
 if __name__ == '__main__':
 
     @dataclass

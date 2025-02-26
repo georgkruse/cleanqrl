@@ -16,4 +16,5 @@ algorithm_config:
   num_envs:           1
   gamma:              0.99
   cuda: False
-
+  save_model: True
+  wandb: True
