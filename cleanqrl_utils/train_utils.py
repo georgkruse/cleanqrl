@@ -9,6 +9,7 @@ sys.path.append(os.path.join(repo_path, 'cleanqrl'))
 from cleanqrl.ppo_classical import ppo_classical
 from cleanqrl.ppo_classical_continuous import ppo_classical_continuous
 from cleanqrl.ppo_quantum import ppo_quantum
+from cleanqrl.ppo_quantum_continuous import ppo_quantum_continuous
 from cleanqrl.dqn_classical import dqn_classical
 from cleanqrl.dqn_quantum import dqn_quantum
 from cleanqrl.dqn_quantum_jumanji import dqn_quantum_jumanji
@@ -24,6 +25,7 @@ agent_switch = {
     "PPO_classical": ppo_classical, 
     "PPO_classical_continuous": ppo_classical_continuous,
     "PPO_quantum": ppo_quantum,
+    "PPO_quantum_continuous": ppo_quantum_continuous,
     "DQN_classical": dqn_classical,
     "DQN_quantum": dqn_quantum,
     'DQN_quantum_hamiltonian': dqn_quantum_jumanji,
@@ -32,7 +34,7 @@ agent_switch = {
     "REINFORCE_classical_jumanji": reinforce_classical_jumanji,
     "REINFORCE_quantum": reinforce_quantum,
     "REINFORCE_quantum_continuous": reinforce_quantum_continuous,
-    "REINFORCE_quantum": reinforce_quantum_jumanji,
+    "REINFORCE_quantum_jumanji": reinforce_quantum_jumanji,
     
 }
 

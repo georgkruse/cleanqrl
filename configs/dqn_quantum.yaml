@@ -1,43 +1,43 @@
-tune_config:
-  trial_path: logs
-  trial_name: dqn_cartpole
-  ray_local_mode: False
-  num_cpus:       24
-  num_gpus:       0
-  ray_num_trial_samples:  3
-  cpus_per_worker:        3
-  gpus_per_worker:        0
+# general parameters
+trial_path:             logs
+trial_name:             dqn_cartpole
+wandb:                  True
 
-algorithm_config:
-  env_id:   "CartPole-v1"
-  env_wrapper:        minmax
-  agent:               DQN_quantum
-  total_timesteps:    1000
-  learning_rate:      0.001
-  num_envs:           1
-  buffer_size:        10000
-  gamma:              0.99
-  tau:                1.0
-  target_network_frequency:   5
-  batch_size:         16
-  start_e:            1
-  end_e:              0.01
-  exploration_fraction:   0.35
-  learning_starts:        100
-  train_frequency:        1
+# ray tune parameters
+ray_local_mode:         False
+num_cpus:               4
+num_gpus:               0
+ray_num_trial_samples:  3
+cpus_per_worker:        3
+gpus_per_worker:        0
 
-  lr_input_scaling:   0.001    
-  lr_weights:   0.001    
-  lr_output_scaling:   0.1   
-  num_qubits:         4
-  num_layers:         5
-  ansatz:             hea
-  init_method:        uniform
-  observables:        global
-  device:             default.qubit
-  diff_method:        adjoint
-  
+# algorithm parameters
+env_id:   "CartPole-v1"
+env_wrapper:        minmax
+agent:               DQN_quantum
+total_timesteps:    1000
+learning_rate:      0.001
+num_envs:           1
+buffer_size:        10000
+gamma:              0.99
+tau:                1.0
+target_network_frequency:   5
+batch_size:         16
+start_e:            1
+end_e:              0.01
+exploration_fraction:   0.35
+learning_starts:        100
+train_frequency:        1
 
-  cuda: False
-  save_model: True
-  wandb: True
+lr_input_scaling:   0.001    
+lr_weights:   0.001    
+lr_output_scaling:   0.1   
+num_qubits:         4
+num_layers:         5
+ansatz:             hea
+init_method:        uniform
+observables:        global
+device:             lightning.qubit
+diff_method:        adjoint
+cuda: False
+save_model: True

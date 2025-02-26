@@ -1,21 +1,21 @@
-# This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import os
 import ray
 import json
-import time
 import wandb
+import time
 import yaml
 from datetime import datetime
+from dataclasses import dataclass
+
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from dataclasses import dataclass
-from torch.distributions.categorical import Categorical
+from torch.distributions.normal import Normal
 from ray.train._internal.session import get_session
 import pennylane as qml
-
 
 def make_env(env_id, config):
     def thunk():
@@ -23,7 +23,7 @@ def make_env(env_id, config):
         env = gym.make(env_id)
         env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        # env = gym.wrappers.ClipAction(env)
+        env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.NormalizeObservation(env)
         # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
         env = gym.wrappers.NormalizeReward(env, gamma=config['gamma'])
@@ -50,17 +50,17 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
                     qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
         # TODO: make observation dependent on num_actions
         if agent_type == 'actor':
-            return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+            return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)@qml.PauliZ(2))] 
         elif agent_type == 'critic':
             return [qml.expval(qml.PauliZ(0))]
 
 
-class PPOAgentQuantum(nn.Module):
+class PPOAgentQuantumContinuous(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
         self.num_features = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.num_actions = np.prod(envs.single_action_space.shape)
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
@@ -77,10 +77,12 @@ class PPOAgentQuantum(nn.Module):
         # trainable weights are initialized randomly between -pi and pi
         self.weights_actor = nn.Parameter(torch.rand(self.num_layers,self.num_qubits*2)*2*torch.pi-torch.pi, requires_grad=True)
         
+        # additional trainable parameters for the variance of the continuous actions
+        self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
+
         device = qml.device(config["device"], wires = self.wires)
         self.quantum_circuit = qml.QNode(hardware_efficient_ansatz, device, diff_method = config["diff_method"], interface = "torch")
         
-
     def get_value(self, x):
         value = self.quantum_circuit(x, self.input_scaling_critic, self.weights_critic, 
                                      self.wires, self.num_layers, self.num_actions, 'critic')
@@ -88,16 +90,17 @@ class PPOAgentQuantum(nn.Module):
         value = value * self.output_scaling_critic
         return value
 
-
     def get_action_and_value(self, x, action=None):
-        logits = self.quantum_circuit(x, self.input_scaling_actor, self.weights_actor, 
+        action_mean = self.quantum_circuit(x, self.input_scaling_actor, self.weights_actor, 
                                       self.wires, self.num_layers, self.num_actions, 'actor')
-        logits = torch.stack(logits, dim = 1)
-        logits = logits * self.output_scaling_actor
-        probs = Categorical(logits=logits)
+        action_mean = torch.stack(action_mean, dim = 1)
+        action_mean = action_mean * self.output_scaling_actor
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
+        probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.get_value(x)
+        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.get_value(x)
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -109,9 +112,9 @@ def log_metrics(config, metrics, report_path=None):
         with open(os.path.join(report_path, 'result.json'), "a") as f:
             json.dump(metrics, f)
             f.write("\n")
-    
 
-def ppo_quantum(config):
+
+def ppo_quantum_continuous(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
     num_minibatches = config["num_minibatches"]
@@ -150,7 +153,7 @@ def ppo_quantum(config):
         session = get_session()
         report_path = session.storage.trial_fs_path 
         name = session.trial_id
-    
+
     if config['wandb']:
         wandb.init(
             project='cleanqrl',
@@ -161,7 +164,7 @@ def ppo_quantum(config):
             save_code=True,
             dir=report_path
         )
-
+    
     # TRY NOT TO MODIFY: seeding
     # if 'seed' in config.keys():
     #     random.seed(seed)
@@ -169,15 +172,16 @@ def ppo_quantum(config):
     #     torch.manual_seed(seed)
     seed = np.random.randint(0,1e9)
 
-    device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
+    # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, config) for i in range(num_envs)],
+        [make_env(env_id, config) for i in range(num_envs)]
     )
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
-    agent = PPOAgentQuantum(envs, config).to(device)  # This is what I need to change to fit quantum into the picture
+    agent = PPOAgentQuantumContinuous(envs, config).to(device)  # This is what I need to change to fit quantum into the picture
     optimizer = optim.Adam([
         {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
         {"params": agent.output_scaling_actor, "lr": lr_output_scaling},
@@ -186,7 +190,7 @@ def ppo_quantum(config):
         {"params": agent.output_scaling_critic, "lr": lr_output_scaling},
         {"params": agent.weights_critic, "lr": lr_weights}
     ])   
-
+    # ALGO Logic: Storage setup
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(device)
     actions = torch.zeros((num_steps, num_envs) + envs.single_action_space.shape).to(device)
     logprobs = torch.zeros((num_steps, num_envs)).to(device)
@@ -194,6 +198,7 @@ def ppo_quantum(config):
     dones = torch.zeros((num_steps, num_envs)).to(device)
     values = torch.zeros((num_steps, num_envs)).to(device)
 
+    # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=seed)
@@ -229,9 +234,6 @@ def ppo_quantum(config):
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
-            metrics = {}
-            # If the episode is finished, report the metrics
-            # Here addtional logging can be added
             if "episode" in infos:
                 for idx, finished in enumerate(infos["_episode"]):
                     if finished:
@@ -279,7 +281,7 @@ def ppo_quantum(config):
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -327,7 +329,6 @@ def ppo_quantum(config):
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         metrics = {}
         metrics["lr_input_scaling"] = optimizer.param_groups[0]["lr"]
@@ -341,8 +342,8 @@ def ppo_quantum(config):
         metrics["clipfrac"] = np.mean(clipfracs)
         metrics["explained_variance"] = np.mean(explained_var)
         metrics["SPS"] = int(global_step / (time.time() - start_time))
-        log_metrics(config, metrics, report_path)
-        
+        log_metrics(config, metrics, report_path)        
+
     if config['save_model']:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
         torch.save(agent.state_dict(), model_path)
@@ -352,18 +353,20 @@ def ppo_quantum(config):
     if config['wandb']:
         wandb.finish()
 
+
 if __name__ == "__main__":
     
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = 'ppo_quantum'  # Name of the trial
+        trial_name: str = 'ppo_quantum_continuous'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         wandb: bool = True # Use wandb to log experiment data 
 
         # Algorithm parameters
-        env_id: str = "CartPole-v1" # Environment ID
+        env_id: str = "Pendulum-v1" # Environment ID
         total_timesteps: int = 1000000 # Total timesteps for the experiment
+        learning_rate: float = 3e-4 # Learning rate of the optimizer
         num_envs: int = 1 # Number of parallel environments
         num_steps: int = 2048 # Steps per environment per policy rollout
         anneal_lr: bool = True # Toggle for learning rate annealing
@@ -382,6 +385,10 @@ if __name__ == "__main__":
         max_grad_norm: float = 0.5 # Maximum gradient norm for clipping
         target_kl: float = None # Target KL divergence threshold
         cuda: bool = False  # Whether to use CUDA
+        num_qubits: int = 3  # Number of qubits
+        num_layers: int = 2  # Number of layers in the quantum circuit
+        device: str = "default.qubit"  # Quantum device
+        diff_method: str = "backprop"  # Differentiation method
         save_model: bool = True # Save the model after the run
 
     config = vars(Config())
@@ -396,4 +403,4 @@ if __name__ == "__main__":
     with open(config_path, 'w') as file:
         yaml.dump(config, file)
 
-    ppo_quantum(config)
+    ppo_quantum_continuous(config)

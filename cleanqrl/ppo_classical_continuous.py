@@ -5,8 +5,7 @@ import json
 import wandb
 import time
 import yaml
-from ray import tune
-import datetime
+from datetime import datetime
 from dataclasses import dataclass
 
 import gymnasium as gym
@@ -33,7 +32,7 @@ def make_env(env_id, config):
     return thunk
 
 
-class Agent(nn.Module):
+class PPOAgentClassicalContinuous(nn.Module):
     def __init__(self, envs):
         super().__init__()
         self.critic = nn.Sequential(
@@ -146,7 +145,7 @@ def ppo_classical_continuous(config):
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
-    agent = Agent(envs).to(device)
+    agent = PPOAgentClassicalContinuous(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -197,13 +196,13 @@ def ppo_classical_continuous(config):
                         metrics = {}
                         global_episodes +=1
                         episode_returns.append(infos['episode']['r'].tolist()[idx])
-                        metrics['episodic_return'] = infos['episode']['r'].tolist()[idx]
-                        metrics['episodic_length'] = infos['episode']['l'].tolist()[idx]
+                        metrics['episode_reward'] = infos['episode']['r'].tolist()[idx]
+                        metrics['episode_length'] = infos['episode']['l'].tolist()[idx]
                         metrics['global_step'] = global_step
                         log_metrics(config, metrics, report_path)
-            if global_episodes > 10 and not ray.is_initialized():
-                if global_step % 100 == 0:
-                    print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-10:]))
+                        
+                if global_episodes % 10 == 0 and not ray.is_initialized():
+                    print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-1:]))
                        
         # bootstrap value if not done
         with torch.no_grad():
@@ -313,10 +312,12 @@ if __name__ == "__main__":
     
     @dataclass
     class Config:
+        # General parameters
         trial_name: str = 'ppo_classical_continuous'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+        wandb: bool = True # Use wandb to log experiment data 
 
-        # Algorithm specific arguments
+        # Algorithm parameters
         env_id: str = "Pendulum-v1" # Environment ID
         total_timesteps: int = 1000000 # Total timesteps for the experiment
         learning_rate: float = 3e-4 # Learning rate of the optimizer
@@ -334,12 +335,14 @@ if __name__ == "__main__":
         vf_coef: float = 0.5 # Value function coefficient
         max_grad_norm: float = 0.5 # Maximum gradient norm for clipping
         target_kl: float = None # Target KL divergence threshold
-    
+        cuda: bool = False  # Whether to use CUDA
+        save_model: bool = True # Save the model after the run
+
     config = vars(Config())
     
     # Based on the current time, create a unique name for the experiment
-    config['trial_name'] = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
-    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], config['trial_name'])
+    config['trial_name'] = datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config['trial_name']
+    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config['trial_path'], config['trial_name'])
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated
     os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)

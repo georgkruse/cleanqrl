@@ -69,7 +69,3 @@ def extract_hyperparameters(conf):
             add_hyperparameters(conf[key])  
 
     return key_names, hyperparameters, single_elements
-
-def generate_config(config):  
-    config = add_hyperparameters(config)
-    return config

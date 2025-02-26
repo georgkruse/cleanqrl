@@ -4,7 +4,7 @@ import json
 import time
 import yaml
 import wandb
-import datetime
+from datetime import datetime
 import gymnasium as gym
 import numpy as np
 import torch
@@ -99,13 +99,11 @@ def reinforce_classical(config):
     obs = torch.Tensor(obs).to(device)
     global_episodes = 0
     episode_returns = []
-    losses = []
 
     while global_step < total_timesteps:
         log_probs = []
         rewards = []
         done = False
-        metrics = {}
 
         # Episode loop
         while not done:
@@ -148,16 +146,15 @@ def reinforce_classical(config):
                     metrics = {}
                     global_episodes +=1
                     episode_returns.append(infos['episode']['r'].tolist()[idx])
-                    metrics['episodic_return'] = infos['episode']['r'].tolist()[idx]
-                    metrics['episodic_length'] = infos['episode']['l'].tolist()[idx]
+                    metrics['episode_reward'] = infos['episode']['r'].tolist()[idx]
+                    metrics['episode_length'] = infos['episode']['l'].tolist()[idx]
                     metrics['global_step'] = global_step
                     metrics["policy_loss"] = loss.item()
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
-
                     log_metrics(config, metrics, report_path)
-        if global_episodes > 10 and not ray.is_initialized():
-            if global_step % 100 == 0:
-                print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-10:]))
+                    
+            if global_episodes % 10 == 0 and not ray.is_initialized():
+                print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-1:]))
                        
     if config['save_model']:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
@@ -167,31 +164,34 @@ def reinforce_classical(config):
     envs.close() 
     if config['wandb']:
         wandb.finish()
-        
+
 if __name__ == '__main__':
 
     @dataclass
     class Config:
+        # General parameters
         trial_name: str = 'reinforce_classical'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+        wandb: bool = True # Use wandb to log experiment data 
+
+        # Algorithm parameters
         env_id: str = "CartPole-v1"  # Environment ID
         num_envs: int = 2  # Number of environments
         total_timesteps: int = 100000  # Total number of timesteps
         gamma: float = 0.99  # discount factor
         lr: float = 0.01  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
+        save_model: bool = True # Save the model after the run
 
     config = vars(Config())
     
     # Based on the current time, create a unique name for the experiment
-    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
-    path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
-    config['path'] = path
+    config['trial_name'] = datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config['trial_name']
+    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config['trial_path'], config['trial_name'])
 
-    # Create the directory and save a copy of the config file so 
-    # that the experiment can be replicated
-    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
-    config_path = os.path.join(path, 'config.yml')
+    # Create the directory and save a copy of the config file so that the experiment can be replicated
+    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
+    config_path = os.path.join(config['path'], 'config.yml')
     with open(config_path, 'w') as file:
         yaml.dump(config, file)
 

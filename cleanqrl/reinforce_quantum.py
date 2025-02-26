@@ -3,7 +3,8 @@ import ray
 import json
 import time
 import yaml
-import datetime
+import wandb
+from datetime import datetime
 import gymnasium as gym
 import numpy as np
 import torch
@@ -11,33 +12,28 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
 from dataclasses import dataclass
+from ray.train._internal.session import get_session
 import pennylane as qml
-
-class ArctanNormalizationWrapper(gym.ObservationWrapper):
-    def observation(self, obs):
-        return np.arctan(obs)
-
 
 def make_env(env_id, config=None):
     def thunk():
         env = gym.make(env_id)
-        env = ArctanNormalizationWrapper(env)       
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
     return thunk
 
 
-def hardware_efficient_ansatz(x, input_scaling_weights, variational_weights, wires, layers, num_actions):
+def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
         for i, wire in enumerate(wires):
-            qml.RX(input_scaling_weights[layer, i] * x[:,i], wires = [wire])
+            qml.RX(input_scaling[layer, i] * x[:,i], wires = [wire])
     
             for i, wire in enumerate(wires):
-                qml.RY(variational_weights[layer, i], wires = [wire])
+                qml.RY(weights[layer, i], wires = [wire])
 
             for i, wire in enumerate(wires):
-                qml.RZ(variational_weights[layer, i+len(wires)], wires = [wire])
+                qml.RZ(weights[layer, i+len(wires)], wires = [wire])
 
             if len(wires) == 2:
                 qml.CZ(wires = wires)
@@ -59,45 +55,64 @@ class ReinforceAgentQuantum(nn.Module):
         self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones      
-        self.register_parameter(name="input_scaling", param = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True))
-        self.register_parameter(name="output_scaling", param = nn.Parameter(torch.ones(self.num_actions), requires_grad=True))
+        self.input_scaling = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True)
+        self.output_scaling = nn.Parameter(torch.ones(self.num_actions), requires_grad=True)
         # trainable weights are initialized randomly between -pi and pi
-        self.register_parameter(name="weights", param = nn.Parameter(torch.rand(self.num_layers,self.num_qubits * 2) * 2 * torch.pi - torch.pi, requires_grad=True))
+        self.weights = nn.Parameter(torch.rand(self.num_layers,self.num_qubits*2)*2*torch.pi-torch.pi, requires_grad=True)
         
         device = qml.device(config["device"], wires = self.wires)
         self.quantum_circuit = qml.QNode(hardware_efficient_ansatz, device, diff_method = config["diff_method"], interface = "torch")
         
+
     def get_action_and_logprob(self, x):
-        x = x.repeat(1, len(self.wires) // len(x[0]) + 1)[:, :len(self.wires)]
-        logits = self.quantum_circuit(x, 
-                         self._parameters["input_scaling"], 
-                         self._parameters["weights"], 
-                         self.wires, 
-                         self.num_layers, 
-                         self.num_actions)
-        
-        if type(logits) == list:
-            logits = torch.stack(logits, dim = 1)
-        logits_scaled = logits * self._parameters["output_scaling"]
-        probs = Categorical(logits=logits_scaled)
+        logits = self.quantum_circuit(x, self.input_scaling, self.weights, self.wires, self.num_layers, self.num_actions)
+        logits = torch.stack(logits, dim = 1)
+        logits = logits * self.output_scaling      
+        probs = Categorical(logits=logits)
         action = probs.sample()
         return action, probs.log_prob(action)
 
 
+def log_metrics(config, metrics, report_path=None):
+    if config['wandb']:
+        wandb.log(metrics)
+    if ray.is_initialized():
+        ray.train.report(metrics=metrics)
+    else:
+        with open(os.path.join(report_path, 'result.json'), "a") as f:
+            json.dump(metrics, f)
+            f.write("\n")
+
+
 def reinforce_quantum(config):
-    cuda = config["cuda"]
-    env_id = config["env_id"]
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
+    env_id = config["env_id"]
     gamma = config["gamma"]
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
 
     if not ray.is_initialized():
-        report_path = os.path.join(config["path"], "result.json")
-        with open(report_path, "w") as f:
+        report_path = config["path"]
+        name = config['trial_name']
+        with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
+    else:
+        session = get_session()
+        report_path = session.storage.trial_fs_path 
+        name = session.trial_id
+
+    if config['wandb']:
+        wandb.init(
+            project='cleanqrl',
+            sync_tensorboard=True,
+            config=config,
+            name=name,
+            monitor_gym=True,
+            save_code=True,
+            dir=report_path
+        )
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
@@ -108,11 +123,12 @@ def reinforce_quantum(config):
 
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
+    # Here, the classical agent is initialized with a Neural Network
     agent = ReinforceAgentQuantum(envs, config).to(device)
     optimizer = optim.Adam([
-        {"params": agent._parameters["input_scaling"], "lr": lr_input_scaling},
-        {"params": agent._parameters["output_scaling"], "lr": lr_output_scaling},
-        {"params": agent._parameters["weights"], "lr": lr_weights}
+        {"params": agent.input_scaling, "lr": lr_input_scaling},
+        {"params": agent.output_scaling, "lr": lr_output_scaling},
+        {"params": agent.weights, "lr": lr_weights}
     ])
 
     global_step = 0
@@ -121,13 +137,11 @@ def reinforce_quantum(config):
     obs = torch.Tensor(obs).to(device)
     global_episodes = 0
     episode_returns = []
-    losses = []
 
     while global_step < total_timesteps:
         log_probs = []
         rewards = []
         done = False
-        metrics = {}
 
         # Episode loop
         while not done:
@@ -137,11 +151,11 @@ def reinforce_quantum(config):
             rewards.append(reward)
             obs = torch.Tensor(obs).to(device)
             done = np.any(terminations) or np.any(truncations)
-
+        
         global_episodes +=1
 
+        # Not sure about this?
         global_step += len(rewards) * num_envs
-        steps_per_second = int(global_step / (time.time() - start_time))
 
         # Calculate discounted rewards
         discounted_rewards = []
@@ -161,41 +175,44 @@ def reinforce_quantum(config):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
+        
         # If the episode is finished, report the metrics
         # Here addtional logging can be added
         if "episode" in infos:
-            losses.append(float(loss.item()))
-            metrics["loss"] = float(float(loss.item()))
-
             for idx, finished in enumerate(infos["_episode"]):
                 if finished:
+                    metrics = {}
                     global_episodes +=1
-                    episode_returns.append(float(infos["episode"]["r"][idx]))
-                    metrics["episodic_return"] = float(infos["episode"]["r"][idx])
-                    metrics["global_step"] = global_step
-                    metrics["episode"] = global_episodes             
+                    episode_returns.append(infos['episode']['r'].tolist()[idx])
+                    metrics['episode_reward'] = infos['episode']['r'].tolist()[idx]
+                    metrics['episode_length'] = infos['episode']['l'].tolist()[idx]
+                    metrics['global_step'] = global_step
+                    metrics["policy_loss"] = loss.item()
+                    metrics["SPS"] = int(global_step / (time.time() - start_time))
+                    log_metrics(config, metrics, report_path)
 
-                    if ray.is_initialized():
-                        ray.train.report(metrics=metrics)
-                    else:
-                        with open(report_path, "a") as f:
-                            json.dump(metrics, f)
-                            f.write("\n")
+            if global_episodes % 10 == 0 and not ray.is_initialized():
+                print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-1:]))
+                       
+    if config['save_model']:
+        model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
+        torch.save(agent.state_dict(), model_path)
+        print(f"model saved to {model_path}")
         
-        print(f"Global step: {global_step}, " 
-              f"Mean Return: {np.round(np.mean(episode_returns[-10:]), 2)}, "
-              f"Mean Loss: {np.round(np.mean(losses[-10:]), 5)}, "
-              f"SPS: {steps_per_second}")
-        
-    envs.close()
+    envs.close() 
+    if config['wandb']:
+        wandb.finish()
 
 if __name__ == '__main__':
 
     @dataclass
     class Config:
+        # General parameters
         trial_name: str = 'reinforce_quantum'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+        wandb: bool = True # Use wandb to log experiment data 
+
+        # Algorithm parameters
         env_id: str = "CartPole-v1"  # Environment ID
         num_envs: int = 1  # Number of environments
         total_timesteps: int = 100000  # Total number of timesteps
@@ -208,18 +225,17 @@ if __name__ == '__main__':
         num_layers: int = 2  # Number of layers in the quantum circuit
         device: str = "default.qubit"  # Quantum device
         diff_method: str = "backprop"  # Differentiation method
+        save_model: bool = True # Save the model after the run
 
     config = vars(Config())
     
     # Based on the current time, create a unique name for the experiment
-    name = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config["trial_name"]
-    path = os.path.join(os.path.dirname(os.getcwd()), config["trial_path"], name)
-    config['path'] = path
+    config['trial_name'] = datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config['trial_name']
+    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config['trial_path'], config['trial_name'])
 
-    # Create the directory and save a copy of the config file so 
-    # that the experiment can be replicated
-    os.makedirs(os.path.dirname(path + '/'), exist_ok=True)
-    config_path = os.path.join(path, 'config.yml')
+    # Create the directory and save a copy of the config file so that the experiment can be replicated
+    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
+    config_path = os.path.join(config['path'], 'config.yml')
     with open(config_path, 'w') as file:
         yaml.dump(config, file)
 
