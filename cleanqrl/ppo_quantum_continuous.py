@@ -36,23 +36,23 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
     for layer in range(layers):
         for i, wire in enumerate(wires):
             qml.RX(input_scaling[layer, i] * x[:,i], wires = [wire])
-    
-            for i, wire in enumerate(wires):
-                qml.RY(weights[layer, i], wires = [wire])
 
-            for i, wire in enumerate(wires):
-                qml.RZ(weights[layer, i+len(wires)], wires = [wire])
+        for i, wire in enumerate(wires):
+            qml.RY(weights[layer, i], wires = [wire])
 
-            if len(wires) == 2:
-                qml.CZ(wires = wires)
-            else:
-                for i in range(len(wires)):
-                    qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
-        # TODO: make observation dependent on num_actions
-        if agent_type == 'actor':
-            return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)@qml.PauliZ(2))] 
-        elif agent_type == 'critic':
-            return [qml.expval(qml.PauliZ(0))]
+        for i, wire in enumerate(wires):
+            qml.RZ(weights[layer, i+len(wires)], wires = [wire])
+
+        if len(wires) == 2:
+            qml.CZ(wires = wires)
+        else:
+            for i in range(len(wires)):
+                qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
+    # TODO: make observation dependent on num_actions
+    if agent_type == 'actor':
+        return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)@qml.PauliZ(2))] 
+    elif agent_type == 'critic':
+        return [qml.expval(qml.PauliZ(0))]
 
 
 class PPOAgentQuantumContinuous(nn.Module):
@@ -363,8 +363,10 @@ if __name__ == "__main__":
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         wandb: bool = True # Use wandb to log experiment data 
 
-        # Algorithm parameters
+        # Environment parameters
         env_id: str = "Pendulum-v1" # Environment ID
+
+        # Algorithm parameters
         total_timesteps: int = 1000000 # Total timesteps for the experiment
         learning_rate: float = 3e-4 # Learning rate of the optimizer
         num_envs: int = 1 # Number of parallel environments

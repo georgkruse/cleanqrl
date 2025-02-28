@@ -16,28 +16,12 @@ import torch.optim as optim
 from dataclasses import dataclass
 from torch.distributions.categorical import Categorical
 from ray.train._internal.session import get_session
-
-        
-from jumanji.environments import TSP, Knapsack 
-from jumanji.environments.routing.tsp.generator import UniformGenerator
-from jumanji.environments.packing.knapsack.generator import RandomGenerator
-
-import numpy as np 
-import itertools
-
-
 from environments.jumanji_wrapper import *
 
 def make_env(env_id, config):
     def thunk():
-        
         env = create_jumanji_env(env_id, config)
 
-        # # env = gym.wrappers.ClipAction(env)
-        # env = gym.wrappers.NormalizeObservation(env)
-        # # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        # env = gym.wrappers.NormalizeReward(env, gamma=config['gamma'])
-        # env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
@@ -322,9 +306,12 @@ if __name__ == "__main__":
         trial_name: str = 'ppo_classical_jumanji'  # Name of the trial
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         wandb: bool = True # Use wandb to log experiment data 
+        
+        # Environment parameters
+        env_id: str = "TSP-v1" # Environment ID
+        num_cities: int = 4
 
         # Algorithm parameters
-        env_id: str = "TSP-v1" # Environment ID
         total_timesteps: int = 1000000 # Total timesteps for the experiment
         learning_rate: float = 3e-4 # Learning rate of the optimizer
         num_envs: int = 1 # Number of parallel environments

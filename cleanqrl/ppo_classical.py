@@ -307,8 +307,10 @@ if __name__ == "__main__":
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         wandb: bool = True # Use wandb to log experiment data 
 
-        # Algorithm parameters
+        # Environment parameters
         env_id: str = "CartPole-v1" # Environment ID
+        
+        # Algorithm parameters
         total_timesteps: int = 1000000 # Total timesteps for the experiment
         learning_rate: float = 3e-4 # Learning rate of the optimizer
         num_envs: int = 1 # Number of parallel environments

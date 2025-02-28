@@ -185,8 +185,10 @@ if __name__ == '__main__':
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         wandb: bool = True # Use wandb to log experiment data 
 
+        # Environment parameters
+        env_id: str = "Pendulum-v1" # Environment ID
+        
         # Algorithm parameters
-        env_id: str = "Pendulum-v1"  # Environment ID
         num_envs: int = 2  # Number of environments
         total_timesteps: int = 200000  # Total number of timesteps
         gamma: float = 0.9  # discount factor

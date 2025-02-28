@@ -32,20 +32,20 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
     for layer in range(layers):
         for i, wire in enumerate(wires):
             qml.RX(input_scaling[layer, i] * x[:,i], wires = [wire])
-    
-            for i, wire in enumerate(wires):
-                qml.RY(weights[layer, i], wires = [wire])
 
-            for i, wire in enumerate(wires):
-                qml.RZ(weights[layer, i+len(wires)], wires = [wire])
+        for i, wire in enumerate(wires):
+            qml.RY(weights[layer, i], wires = [wire])
 
-            if len(wires) == 2:
-                qml.CZ(wires = wires)
-            else:
-                for i in range(len(wires)):
-                    qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
-        # TODO: make observation dependent on num_actions
-        return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+        for i, wire in enumerate(wires):
+            qml.RZ(weights[layer, i+len(wires)], wires = [wire])
+
+        if len(wires) == 2:
+            qml.CZ(wires = wires)
+        else:
+            for i in range(len(wires)):
+                qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
+    # TODO: make observation dependent on num_actions
+    return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
 
 
 class DQNAgentQuantum(nn.Module):
@@ -251,8 +251,10 @@ if __name__ == '__main__':
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         wandb: bool = True # Use wandb to log experiment data 
 
+        # Environment parameters
+        env_id: str = "CartPole-v1" # Environment ID
+        
         # Algorithm parameters
-        env_id: str = "CartPole-v1"  # Environment ID
         num_envs: int = 1  # Number of environments
         buffer_size: int = 10000  # Size of the replay buffer
         total_timesteps: int = 10000  # Total number of timesteps

@@ -12,12 +12,14 @@ cpus_per_worker:        3
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   "CartPole-v1"
+env_id:              Knapsack-v1
+num_items:          4
+total_budget:       2
 
 # algorithm parameters
 env_wrapper:        minmax
-agent:               PPO_quantum
-total_timesteps:    1000000
+agent:               PPO_quantum_jumanji
+total_timesteps:    10000
 num_envs:           2
 num_steps:          128
 anneal_lr:          True

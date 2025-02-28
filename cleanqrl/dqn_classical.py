@@ -213,8 +213,10 @@ if __name__ == '__main__':
         trial_path: str = 'logs'  # Path to save logs relative to the parent directory
         wandb: bool = True # Use wandb to log experiment data 
 
+        # Environment parameters
+        env_id: str = "CartPole-v1" # Environment ID
+        
         # Algorithm parameters
-        env_id: str = "CartPole-v1"  # Environment ID
         num_envs: int = 1  # Number of environments
         buffer_size: int = 10000  # Size of the replay buffer
         total_timesteps: int = 100000  # Total number of timesteps
