@@ -10,78 +10,6 @@ from jumanji.environments.packing.knapsack.generator import RandomGenerator as R
 from jumanji.environments.routing.maze.generator import RandomGenerator as RandomGeneratorMaze
 
 
-def tsp_compute_optimal_tour(nodes):
-
-    optimal_tour_length = 1000
-    for tour_permutation  in itertools.permutations(range(1,nodes.shape[0])):
-        tour = [0] + list(tour_permutation)
-        tour_length = tsp_compute_tour_length(nodes, tour)
-        if tour_length < optimal_tour_length:
-            optimal_tour_length = tour_length
-    return optimal_tour_length
-
-
-def tsp_compute_tour_length(nodes, tour):
-    """
-    Compute length of a tour, including return to start node.
-    (If start node is already added as last node in tour, 0 will be added to tour length.)
-    :param nodes: all nodes in the graph in form of (x, y) coordinates
-    :param tour: list of node indices denoting a (potentially partial) tour
-    :return: tour length
-    """
-    tour_length = 0
-    for i in range(len(tour)):
-        if i < len(tour)-1:
-            tour_length += np.linalg.norm(np.asarray(nodes[tour[i]]) - np.asarray(nodes[tour[i+1]]))
-        else:
-            tour_length += np.linalg.norm(np.asarray(nodes[tour[-1]]) - np.asarray(nodes[tour[0]]))
-
-    return tour_length
-
-
-def knapsack_optimal_value(weights, values, total_budget, precision=1000):
-    """
-    Solves the knapsack problem with float weights and values between 0 and 1.
-    
-    Args:
-        weights: List or array of item weights (floats between 0 and 1)
-        values: List or array of item values (floats between 0 and 1)
-        capacity: Maximum weight capacity of the knapsack (float)
-        precision: Number of discretization steps for weights (default: 1000)
-        
-    Returns:
-        The maximum value that can be achieved
-    """
-    # Convert to numpy arrays
-    weights = np.array(weights)
-    values = np.array(values)
-    
-    # Validate input
-    if not np.all((0 <= weights) & (weights <= 1)) or not np.all((0 <= values) & (values <= 1)):
-        raise ValueError("All weights and values must be between 0 and 1")
-    
-    if total_budget < 0:
-        raise ValueError("Capacity must be non-negative")
-    
-    n = len(weights)
-    if n == 0:
-        return 0.0
-    
-    # Scale weights to integers for dynamic programming
-    scaled_weights = np.round(weights * precision).astype(int)
-    scaled_capacity = int(total_budget * precision)
-    
-    # Initialize DP table
-    dp = np.zeros(scaled_capacity + 1)
-    
-    # Fill the DP table
-    for i in range(n):
-        # We need to go backward to avoid counting an item multiple times
-        for w in range(scaled_capacity, scaled_weights[i] - 1, -1):
-            dp[w] = max(dp[w], dp[w - scaled_weights[i]] + values[i])
-    
-    return float(dp[scaled_capacity])
-
 
 class JumanjiWrapperTSP(gym.Wrapper):
     def step(self, action):
@@ -89,7 +17,7 @@ class JumanjiWrapperTSP(gym.Wrapper):
         if truncate:
             num_cities = self.env.unwrapped.num_cities
             nodes = np.reshape(self.previous_state[num_cities:num_cities*3], (-1, 2))
-            optimal_tour_length = tsp_compute_optimal_tour(nodes)
+            optimal_tour_length = self.tsp_compute_optimal_tour(nodes)
             info['optimal_tour_length'] = optimal_tour_length
             info['approximation_ratio'] = info['episode']['r']/optimal_tour_length
             # if info['episode']['l'] < num_cities:
@@ -102,6 +30,36 @@ class JumanjiWrapperTSP(gym.Wrapper):
         self.previous_state = state
         return state, reward, False, truncate, info
 
+
+    def tsp_compute_optimal_tour(self, nodes):
+
+        optimal_tour_length = 1000
+        for tour_permutation  in itertools.permutations(range(1,nodes.shape[0])):
+            tour = [0] + list(tour_permutation)
+            tour_length = self.tsp_compute_tour_length(nodes, tour)
+            if tour_length < optimal_tour_length:
+                optimal_tour_length = tour_length
+        return optimal_tour_length
+
+
+    def tsp_compute_tour_length(self, nodes, tour):
+        """
+        Compute length of a tour, including return to start node.
+        (If start node is already added as last node in tour, 0 will be added to tour length.)
+        :param nodes: all nodes in the graph in form of (x, y) coordinates
+        :param tour: list of node indices denoting a (potentially partial) tour
+        :return: tour length
+        """
+        tour_length = 0
+        for i in range(len(tour)):
+            if i < len(tour)-1:
+                tour_length += np.linalg.norm(np.asarray(nodes[tour[i]]) - np.asarray(nodes[tour[i+1]]))
+            else:
+                tour_length += np.linalg.norm(np.asarray(nodes[tour[-1]]) - np.asarray(nodes[tour[0]]))
+
+        return tour_length
+
+
 class JumanjiWrapperKnapsack(gym.Wrapper):
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
@@ -110,7 +68,7 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
             total_budget = self.env.unwrapped.total_budget
             values = self.previous_state[num_items*2:num_items*3]
             weights = self.previous_state[-num_items:]
-            optimal_value = knapsack_optimal_value(weights, values, total_budget)
+            optimal_value = self.knapsack_optimal_value(weights, values, total_budget)
             info['optimal_value'] = optimal_value
             info['approximation_ratio'] = info['episode']['r']/optimal_value
             # if info['approximation_ratio'] > 0.9:
@@ -120,23 +78,68 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
         self.previous_state = state
         return state, reward, False, truncate, info
 
+    def knapsack_optimal_value(self, weights, values, total_budget, precision=1000):
+        """
+        Solves the knapsack problem with float weights and values between 0 and 1.
+        
+        Args:
+            weights: List or array of item weights (floats between 0 and 1)
+            values: List or array of item values (floats between 0 and 1)
+            capacity: Maximum weight capacity of the knapsack (float)
+            precision: Number of discretization steps for weights (default: 1000)
+            
+        Returns:
+            The maximum value that can be achieved
+        """
+        # Convert to numpy arrays
+        weights = np.array(weights)
+        values = np.array(values)
+        
+        # Validate input
+        if not np.all((0 <= weights) & (weights <= 1)) or not np.all((0 <= values) & (values <= 1)):
+            raise ValueError("All weights and values must be between 0 and 1")
+        
+        if total_budget < 0:
+            raise ValueError("Capacity must be non-negative")
+        
+        n = len(weights)
+        if n == 0:
+            return 0.0
+        
+        # Scale weights to integers for dynamic programming
+        scaled_weights = np.round(weights * precision).astype(int)
+        scaled_capacity = int(total_budget * precision)
+        
+        # Initialize DP table
+        dp = np.zeros(scaled_capacity + 1)
+        
+        # Fill the DP table
+        for i in range(n):
+            # We need to go backward to avoid counting an item multiple times
+            for w in range(scaled_capacity, scaled_weights[i] - 1, -1):
+                dp[w] = max(dp[w], dp[w - scaled_weights[i]] + values[i])
+        
+        return float(dp[scaled_capacity])
+
 class JumanjiWrapperMaze(gym.Wrapper):
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
         if truncate:
-            num_items = self.env.unwrapped.num_items
-            total_budget = self.env.unwrapped.total_budget
-            values = self.previous_state[num_items*2:num_items*3]
-            weights = self.previous_state[-num_items:]
-            optimal_value = knapsack_optimal_value(weights, values, total_budget)
-            info['optimal_value'] = optimal_value
-            info['approximation_ratio'] = info['episode']['r']/optimal_value
+            pass
+            # num_items = self.env.unwrapped.num_items
+            # total_budget = self.env.unwrapped.total_budget
+            # values = self.previous_state[num_items*2:num_items*3]
+            # weights = self.previous_state[-num_items:]
+            # optimal_value = knapsack_optimal_value(weights, values, total_budget)
+            # info['optimal_value'] = optimal_value
+            # info['approximation_ratio'] = info['episode']['r']/optimal_value
             # if info['approximation_ratio'] > 0.9:
             #     print(info['approximation_ratio'])
         else:
             info = dict()
         self.previous_state = state
         return state, reward, False, truncate, info
+
 
 class MinMaxNormalizationWrapper(gym.ObservationWrapper):
     def __init__(self, env):
