@@ -5,25 +5,6 @@ from environments.maze import MazeEnv
 from environments.tsp import TSPEnv
 
 
-class MinMaxNormalizationWrapper(gym.ObservationWrapper):
-    def __init__(self, env):
-        super(MinMaxNormalizationWrapper, self).__init__(env)
-        self.low = env.observation_space.low
-        self.high = env.observation_space.high
-
-    def observation(self, observation):
-        normalized_obs = -np.pi + 2 * np.pi * (observation - self.low) / (self.high - self.low)
-        return normalized_obs
-
-
-class ArctanNormalizationWrapper(gym.ObservationWrapper):
-    def observation(self, obs):
-        return np.arctan(obs)
-
-class DictWrapper(gym.ObservationWrapper):
-    def observation(self, obs):
-        print('some')
-        return np.arctan(obs)
 
 
 

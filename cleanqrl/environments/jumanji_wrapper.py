@@ -4,9 +4,10 @@ import jumanji
 import jumanji.wrappers
 import gymnasium as gym
         
-from jumanji.environments import TSP, Knapsack 
+from jumanji.environments import TSP, Knapsack, Maze
 from jumanji.environments.routing.tsp.generator import UniformGenerator
-from jumanji.environments.packing.knapsack.generator import RandomGenerator
+from jumanji.environments.packing.knapsack.generator import RandomGenerator as RandomGeneratorKnapsack
+from jumanji.environments.routing.maze.generator import RandomGenerator as RandomGeneratorMaze
 
 
 def tsp_compute_optimal_tour(nodes):
@@ -119,6 +120,41 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
         self.previous_state = state
         return state, reward, False, truncate, info
 
+class JumanjiWrapperMaze(gym.Wrapper):
+    def step(self, action):
+        state, reward, terminate, truncate, info = self.env.step(action)
+        if truncate:
+            num_items = self.env.unwrapped.num_items
+            total_budget = self.env.unwrapped.total_budget
+            values = self.previous_state[num_items*2:num_items*3]
+            weights = self.previous_state[-num_items:]
+            optimal_value = knapsack_optimal_value(weights, values, total_budget)
+            info['optimal_value'] = optimal_value
+            info['approximation_ratio'] = info['episode']['r']/optimal_value
+            # if info['approximation_ratio'] > 0.9:
+            #     print(info['approximation_ratio'])
+        else:
+            info = dict()
+        self.previous_state = state
+        return state, reward, False, truncate, info
+
+class MinMaxNormalizationWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        super(MinMaxNormalizationWrapper, self).__init__(env)
+        self.low = env.observation_space.low
+        self.high = env.observation_space.high
+
+    def observation(self, observation):
+        normalized_obs = -np.pi + 2 * np.pi * (observation - self.low) / (self.high - self.low)
+        return normalized_obs
+
+
+class ArctanNormalizationWrapper(gym.ObservationWrapper):
+    def observation(self, obs):
+        return np.arctan(obs)
+
+
+
 def create_jumanji_env(env_id, config):
     if env_id == 'TSP-v1':
         num_cities = config.get('num_cities', 5)
@@ -127,9 +163,14 @@ def create_jumanji_env(env_id, config):
     elif env_id == 'Knapsack-v1':
         num_items = config.get('num_items', 5)
         total_budget = config.get('total_budget', 2)
-        generator_knapsack = RandomGenerator(num_items=num_items, total_budget=total_budget)
+        generator_knapsack = RandomGeneratorKnapsack(num_items=num_items, total_budget=total_budget)
         env = Knapsack(generator=generator_knapsack)
-    
+    elif env_id == 'Maze-v0':
+        num_rows = config.get('num_rows', 4)
+        num_cols = config.get('num_cols', 4)
+        generator_maze = RandomGeneratorMaze(num_cols=num_cols, num_rows=num_rows)
+        env = Maze(generator=generator_maze)
+
     env = jumanji.wrappers.AutoResetWrapper(env)
     env = jumanji.wrappers.JumanjiToGymWrapper(env)
     env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space

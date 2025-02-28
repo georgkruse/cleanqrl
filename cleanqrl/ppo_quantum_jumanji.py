@@ -29,7 +29,9 @@ def make_env(env_id, config):
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions, agent_type):
     
     # This block needs to be adapted depending on the environment. 
-    # The input vector is of shape [4*n],
+    # The input vector is of shape [4*num_actions] for the Knapsack:
+    # action mask, selected items, values, weights
+    # There is probably no way of one ansatz for all jumnanji envs.
     annotations = x[:,num_actions:num_actions*2]
     values_kp = x[:,num_actions*2:num_actions*3]
     weights_kp = x[:,-num_actions:]
@@ -54,7 +56,7 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
                 qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
     # TODO: make observation dependent on num_actions
     if agent_type == 'actor':
-        return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+        return [qml.expval(qml.PauliZ(i)) for i in range(num_actions)] 
     elif agent_type == 'critic':
         return [qml.expval(qml.PauliZ(0))]
 
