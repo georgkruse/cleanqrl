@@ -12,9 +12,12 @@ cpus_per_worker:        3
 gpus_per_worker:        0
 
 # environment parameters
-env_id:              Knapsack-v1
-num_items:          4
-total_budget:       2
+env_id:              Maze-v0
+num_cols:            4
+num_rows:            4
+# env_id:              Knapsack-v1
+# num_items:          4
+# total_budget:       2
 
 # env_id:              TSP-v1
 # num_cities:          4

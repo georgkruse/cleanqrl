@@ -11,8 +11,10 @@ ray_num_trial_samples:  3
 cpus_per_worker:        3
 gpus_per_worker:        0
 
+# environment parameters
+env_id:   Pendulum-v1
+
 # algorithm parameters
-env_id:                 Pendulum-v1
 agent:                  REINFORCE_classical_continuous
 total_timesteps:        10000
 lr:                     0.001
