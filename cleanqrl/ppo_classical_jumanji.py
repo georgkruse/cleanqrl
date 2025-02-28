@@ -16,7 +16,8 @@ import torch.optim as optim
 from dataclasses import dataclass
 from torch.distributions.categorical import Categorical
 from ray.train._internal.session import get_session
-from environments.jumanji_wrapper import *
+from cleanqrl.wrapper import create_jumanji_env
+
 
 def make_env(env_id, config):
     def thunk():
@@ -175,7 +176,6 @@ def ppo_classical_jumanji(config):
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
-            metrics = {}
             # If the episode is finished, report the metrics
             # Here addtional logging can be added
             if "episode" in infos:
@@ -187,13 +187,17 @@ def ppo_classical_jumanji(config):
                         metrics['episode_reward'] = infos['episode']['r'].tolist()[idx]
                         metrics['episode_length'] = infos['episode']['l'].tolist()[idx]
                         metrics['global_step'] = global_step
-                        metrics['approximation_ratio'] = infos['approximation_ratio'][idx]
-                        episode_approximation_ratio.append(metrics['approximation_ratio'])
+                        if 'approximation_ratio' in infos.keys():
+                            metrics['approximation_ratio'] = infos['approximation_ratio'][idx]
+                            episode_approximation_ratio.append(metrics['approximation_ratio'])
                         log_metrics(config, metrics, report_path)
                         
-                if global_episodes % 100 == 0 and not ray.is_initialized():
-                    print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-50:]), ' Mean approx.: ', np.mean(episode_approximation_ratio[-50:]))
-                       
+                if global_episodes % 50 == 0 and not ray.is_initialized():
+                    logging_info = f'Global step: {global_step}  Mean return: {np.mean(episode_returns[-50:])}'
+                    if 'approximation_ratio' in infos.keys():
+                        logging_info += f'  Mean approximation ratio: {np.mean(episode_approximation_ratio[-50:])}'
+                    print(logging_info)
+
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)

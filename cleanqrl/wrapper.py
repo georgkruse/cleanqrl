@@ -124,18 +124,7 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
 class JumanjiWrapperMaze(gym.Wrapper):
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
-        if truncate:
-            pass
-            # num_items = self.env.unwrapped.num_items
-            # total_budget = self.env.unwrapped.total_budget
-            # values = self.previous_state[num_items*2:num_items*3]
-            # weights = self.previous_state[-num_items:]
-            # optimal_value = knapsack_optimal_value(weights, values, total_budget)
-            # info['optimal_value'] = optimal_value
-            # info['approximation_ratio'] = info['episode']['r']/optimal_value
-            # if info['approximation_ratio'] > 0.9:
-            #     print(info['approximation_ratio'])
-        else:
+        if not truncate:
             info = dict()
         self.previous_state = state
         return state, reward, False, truncate, info
@@ -183,4 +172,6 @@ def create_jumanji_env(env_id, config):
         env = JumanjiWrapperTSP(env)
     elif env_id == 'Knapsack-v1':
         env = JumanjiWrapperKnapsack(env)
+    elif env_id == 'Maze-v0':
+        env = JumanjiWrapperMaze(env)
     return env

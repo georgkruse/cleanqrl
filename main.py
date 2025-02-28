@@ -8,7 +8,7 @@ from cleanqrl_utils.plotting_utils import plot_single_run
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = 'configs/ppo_quantum_jumanji.yaml'
+    config_path = 'configs/ppo_classical_jumanji.yaml'
 
     # Load the config file 
     with open(config_path) as f:
