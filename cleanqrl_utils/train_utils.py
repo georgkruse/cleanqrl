@@ -25,23 +25,23 @@ from cleanqrl.reinforce_quantum_continuous import reinforce_quantum_continuous
 
 
 agent_switch = {
-    "PPO_classical": ppo_classical, 
-    "PPO_classical_continuous": ppo_classical_continuous,
-    "PPO_classical_jumanji": ppo_classical_jumanji,
-    "PPO_quantum": ppo_quantum,
-    "PPO_quantum_continuous": ppo_quantum_continuous,
-    "PPO_quantum_jumanji": ppo_quantum_jumanji,
-    "DQN_classical": dqn_classical,
-    # "DQN_classical_jumanji": dqn_classical_jumanji,    
-    "DQN_quantum": dqn_quantum,
-    # 'DQN_quantum_hamiltonian': dqn_quantum_jumanji,
-    "REINFORCE_classical": reinforce_classical,
-    "REINFORCE_classical_continuous": reinforce_classical_continuous,
-    # "REINFORCE_classical_jumanji": reinforce_classical_jumanji,
-    "REINFORCE_quantum": reinforce_quantum,
-    "REINFORCE_quantum_continuous": reinforce_quantum_continuous,
-    # "REINFORCE_quantum_jumanji": reinforce_quantum_jumanji,
+    "ppo_classical": ppo_classical, 
+    "ppo_classical_continuous": ppo_classical_continuous,
+    "ppo_classical_jumanji": ppo_classical_jumanji,
+    "ppo_quantum": ppo_quantum,
+    "ppo_quantum_continuous": ppo_quantum_continuous,
+    "ppo_quantum_jumanji": ppo_quantum_jumanji,
+    "dqn_classical": dqn_classical,
+    # "dqn_classical_jumanji": dqn_classical_jumanji,    
+    "dqn_quantum": dqn_quantum,
+    # 'dqn_quantum_hamiltonian': dqn_quantum_jumanji,
+    "reinforce_classical": reinforce_classical,
+    "reinforce_classical_continuous": reinforce_classical_continuous,
+    # "reinforce_classical_jumanji": reinforce_classical_jumanji,
+    "reinforce_quantum": reinforce_quantum,
+    "reinforce_quantum_continuous": reinforce_quantum_continuous,
+    # "reinforce_quantum_jumanji": reinforce_quantum_jumanji,
 }
 
 def train_agent(config):
-    agent_switch[config["agent"]](config)
+    agent_switch[config["agent"].lower()](config)
