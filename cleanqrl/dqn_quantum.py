@@ -117,7 +117,7 @@ def dqn_quantum(config: dict):
     else:
         session = get_session()
         report_path = session.storage.trial_fs_path 
-        name = session.trial_id
+        name = session.storage.trial_fs_path.split('/')[-1] 
 
     if config['wandb']:
         wandb.init(

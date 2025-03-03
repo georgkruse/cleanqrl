@@ -1,9 +1,13 @@
+import jax
+import sympy as sp
 import numpy as np 
 import itertools
 import jumanji
 import jumanji.wrappers
 import gymnasium as gym
-        
+from collections import defaultdict
+from gymnasium.spaces import Box, Dict, Discrete
+
 from jumanji.environments import TSP, Knapsack, Maze
 from jumanji.environments.routing.tsp.generator import UniformGenerator
 from jumanji.environments.packing.knapsack.generator import RandomGenerator as RandomGeneratorKnapsack
@@ -14,14 +18,19 @@ from jumanji.environments.routing.maze.generator import RandomGenerator as Rando
 class JumanjiWrapperTSP(gym.Wrapper):
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
+        num_cities = self.env.unwrapped.num_cities
+
+        nodes = np.reshape(state[num_cities:num_cities*3], (-1, 2))
+
+        H = self.tsp_create_ising_hamiltonian(nodes)
         if truncate:
             num_cities = self.env.unwrapped.num_cities
             nodes = np.reshape(self.previous_state[num_cities:num_cities*3], (-1, 2))
             optimal_tour_length = self.tsp_compute_optimal_tour(nodes)
             info['optimal_tour_length'] = optimal_tour_length
             info['approximation_ratio'] = info['episode']['r']/optimal_tour_length
-            # if info['episode']['l'] < num_cities:
-            #     info['approximation_ratio'] -= 10
+            if info['episode']['l'] < num_cities:
+                info['approximation_ratio'] -= 10
             # else: 
             #     if info['approximation_ratio'] > -1.1:
             #         print(info['approximation_ratio'])
@@ -60,7 +69,93 @@ class JumanjiWrapperTSP(gym.Wrapper):
         return tour_length
 
 
+    def tsp_create_ising_hamiltonian(self, nodes):
+        # Calculate number of cities
+        num_cities = nodes.shape[0]
+        
+        # Calculate distance matrix
+        distances = np.zeros((num_cities, num_cities))
+        for i in range(num_cities):
+            for j in range(num_cities):
+                if i != j:
+                    # Euclidean distance between cities
+                    distances[i, j] = np.sqrt((nodes[i, 0] - nodes[j, 0])**2 + 
+                                            (nodes[i, 1] - nodes[j, 1])**2)
+        
+        # Create binary variables for QUBO formulation
+        # x_i,p = 1 if city i is visited at position p
+        x = {}
+        for i in range(num_cities):
+            for p in range(num_cities):
+                x[(i, p)] = sp.symbols(f'x_{i}_{p}')
+        
+        # QUBO Hamiltonian
+        H_qubo = 0
+        
+        # Constraint 1: Each city must be visited exactly once
+        A = 1.0  # Penalty coefficient
+        for i in range(num_cities):
+            constraint = (sum(x[(i, p)] for p in range(num_cities)) - 1)**2
+            H_qubo += A * constraint
+        
+        # Constraint 2: Each position must have exactly one city
+        for p in range(num_cities):
+            constraint = (sum(x[(i, p)] for i in range(num_cities)) - 1)**2
+            H_qubo += A * constraint
+        
+        # Objective function: Minimize total distance
+        B = 1.0  # Weight for the objective term
+        for p in range(num_cities):
+            p_next = (p + 1) % num_cities
+            for i in range(num_cities):
+                for j in range(num_cities):
+                    H_qubo += B * distances[i, j] * x[(i, p)] * x[(j, p_next)]
+        
+        # Expand QUBO
+        H_qubo = sp.expand(H_qubo)
+        
+        # Create spin variables for Ising formulation
+        s = {}
+        for i in range(num_cities):
+            for p in range(num_cities):
+                s[(i, p)] = sp.symbols(f's_{i}_{p}')
+        
+        # Convert QUBO to Ising using the transformation x_i = (s_i + 1)/2
+        H_ising = H_qubo
+        for key in x:
+            H_ising = H_ising.subs(x[key], (s[key] + 1)/2)
+        
+        # Expand the Ising Hamiltonian
+        H_ising = sp.expand(H_ising)
+        
+        return H_ising, s
+
 class JumanjiWrapperKnapsack(gym.Wrapper):
+
+    
+    # def __init__(self, env):
+    #     super().__init__(env)
+    #     spaces = {}
+    #     num_items = 4
+    #     num_quadratic_terms = sum(range(4))
+    #     spaces['linear'] = Box(-np.inf, np.inf, shape = (num_items,2), dtype='float64')
+    #     spaces['quadratic'] = Box(-np.inf, np.inf, shape = (num_quadratic_terms,3), dtype='float64')
+    #     spaces['annotations'] = Box(-np.inf, np.inf, shape = (num_quadratic_terms,2), dtype='float64')
+
+    #     self._observation_space = Dict(spaces = spaces)
+        # self._observation_space = Dict
+
+    # def reset(self, **kwargs):
+
+    #     output = self.env.reset()
+    #     spaces = {}
+    #     spaces['linear'] = h 
+    #     spaces['quadratic'] = J 
+    #     spaces['annotations']
+
+    #     return output
+    
+
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
         if truncate:
@@ -75,8 +170,33 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
             #     print(info['approximation_ratio'])
         else:
             info = dict()
+            num_items = self.env.unwrapped.num_items
+            total_budget = self.env.unwrapped.total_budget
+            values = state[num_items*2:num_items*3]
+            weights = state[-num_items:]
         self.previous_state = state
+        # self.encoding = 'hamiltonian'
+        # if self.encoding == 'hamiltonian':
+        #     self.weights = weights
+        #     self.values = values
+        #     self.max_weight = total_budget
+        #     offset, QUBO = self.formulate_qubo_unbalanced()
+        #     offset, h, J = self.from_Q_to_Ising(offset, QUBO)
+        #     state = h, J
         return state, reward, False, truncate, info
+
+    def convert_state_to_cost_hamiltonian(self, state):
+        num_items = self.env.unwrapped.num_items
+        total_budget = self.env.unwrapped.total_budget
+        values = state[num_items*2:num_items*3]
+        weights = state[-num_items:]
+        self.weights = weights
+        self.values = values
+        self.max_weight = total_budget
+        offset, QUBO = self.formulate_qubo_unbalanced()
+        offset, h, J = self.from_Q_to_Ising(offset, QUBO)
+        
+        return offset, h, J        
 
     def knapsack_optimal_value(self, weights, values, total_budget, precision=1000):
         """
@@ -121,13 +241,109 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
         
         return float(dp[scaled_capacity])
 
+
+    def formulate_qubo_unbalanced(self, lambdas = None):
+        """
+        Formulates the QUBO with the unbalanced penalization method.
+        This means the QUBO does not use additional slack variables.
+        Params:
+            lambdas: Correspond to the penalty factors in the unbalanced formulation.
+        """
+        if lambdas is None:
+            lambdas = [0.96, 0.0371]
+        num_items = len(self.values)
+        x = [sp.symbols(f"{i}") for i in range(num_items)]
+        cost = 0
+        constraint = 0
+
+        for i in range(num_items):
+            cost -= x[i] * self.values[i]
+            constraint += x[i] * self.weights[i]
+
+        H_constraint = self.max_weight - constraint
+        H_constraint_taylor = 1 - lambdas[0] * H_constraint + 0.5 * lambdas[1] * H_constraint**2
+        H_total = cost + H_constraint_taylor
+        H_total = H_total.expand()
+        H_total = sp.simplify(H_total)
+
+        for i in range(len(x)):
+            H_total = H_total.subs(x[i] ** 2, x[i])
+
+        H_total = H_total.expand()
+        H_total = sp.simplify(H_total)
+
+        "Transform into QUBO matrix"
+        coefficients = H_total.as_coefficients_dict()
+
+        # Remove the offset
+        try:
+            offset = coefficients.pop(1)
+        except IndexError:
+            print("Warning: No offset found in coefficients. Using default of 0.")
+            offset = 0
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            offset = 0
+
+        # Get the QUBO
+        QUBO = np.zeros((num_items, num_items))
+        for key, value in coefficients.items():
+            key = str(key)
+            parts = key.split("*")
+            if len(parts) == 1:
+                QUBO[int(parts[0]), int(parts[0])] = value
+            elif len(parts) == 2:
+                QUBO[int(parts[0]), int(parts[1])] = value / 2
+                QUBO[int(parts[1]), int(parts[0])] = value / 2
+        return offset, QUBO
+
+
+    # def from_Q_to_Ising(self, offset, Q):
+    #     """Convert the matrix Q of Eq.3 into Eq.13 elements J and h"""
+    #     n_qubits = len(Q)  # Get the number of qubits (variables) in the QUBO matrix
+    #     # Create default dictionaries to store h and pairwise interactions J
+    #     h = defaultdict(int)
+    #     J = defaultdict(int)
+
+    #     # Loop over each qubit (variable) in the QUBO matrix
+    #     for i in range(n_qubits):
+    #         # Update the magnetic field for qubit i based on its diagonal element in Q
+    #         h[(i,)] -= Q[i, i] / 2
+    #         # Update the offset based on the diagonal element in Q
+    #         offset += Q[i, i] / 2
+    #         # Loop over other qubits (variables) to calculate pairwise interactions
+    #         for j in range(i + 1, n_qubits):
+    #             # Update the pairwise interaction strength (J) between qubits i and j
+    #             J[(i, j)] += Q[i, j] / 4
+    #             # Update the magnetic fields for qubits i and j based on their interactions in Q
+    #             h[(i,)] -= Q[i, j] / 4
+    #             h[(j,)] -= Q[i, j] / 4
+    #             # Update the offset based on the interaction strength between qubits i and j
+    #             offset += Q[i, j] / 4
+    #     # Return the magnetic fields, pairwise interactions, and the updated offset
+    #     return offset, h, J
+
+
 class JumanjiWrapperMaze(gym.Wrapper):
+
+    def reset(self, **kwargs):
+        if hasattr(self, 'constant_seed'): 
+            output = self.env.reset(seed=self.seed)
+        else:
+            output = self.env.reset()
+        print(output)
+        return output
+    
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
         if not truncate:
             info = dict()
         self.previous_state = state
         return state, reward, False, truncate, info
+
+    def set_seed_constant(self, seed):
+        self.constant_seed = True
+        self.seed = seed
 
 
 class MinMaxNormalizationWrapper(gym.ObservationWrapper):
@@ -147,6 +363,33 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
 
 
 
+def convert_QUBO_to_ising(offset, Q):
+    """Convert the matrix Q of Eq.3 into Eq.13 elements J and h"""
+    n_qubits = len(Q)  # Get the number of qubits (variables) in the QUBO matrix
+    # Create default dictionaries to store h and pairwise interactions J
+    h = np.zeros(Q.shape[0])
+    J = []
+
+    # Loop over each qubit (variable) in the QUBO matrix
+    for i in range(n_qubits):
+        # Update the magnetic field for qubit i based on its diagonal element in Q
+        h[i] -= Q[i, i] / 2
+        # Update the offset based on the diagonal element in Q
+        offset += Q[i, i] / 2
+        # Loop over other qubits (variables) to calculate pairwise interactions
+        for j in range(i + 1, n_qubits):
+            # Update the pairwise interaction strength (J) between qubits i and j
+            J.append([i, j, Q[i, j] / 4])
+            # Update the magnetic fields for     qubits i and j based on their interactions in Q
+            h[i] -= Q[i, j] / 4
+            h[j] -= Q[i, j] / 4
+            # Update the offset based on the interaction strength between qubits i and j
+            offset += Q[i, j] / 4
+    J = np.stack(J)
+    J = np.expand_dims(J, axis=0)        # Return the magnetic fields, pairwise interactions, and the updated offset
+    h = np.expand_dims(h, axis=0)        # Return the magnetic fields, pairwise interactions, and the updated offset
+    return offset, h, J
+
 def create_jumanji_env(env_id, config):
     if env_id == 'TSP-v1':
         num_cities = config.get('num_cities', 5)
@@ -157,13 +400,14 @@ def create_jumanji_env(env_id, config):
         total_budget = config.get('total_budget', 2)
         generator_knapsack = RandomGeneratorKnapsack(num_items=num_items, total_budget=total_budget)
         env = Knapsack(generator=generator_knapsack)
+        
     elif env_id == 'Maze-v0':
         num_rows = config.get('num_rows', 4)
         num_cols = config.get('num_cols', 4)
+        constant_maze = config.get('constant_maze', False)
         generator_maze = RandomGeneratorMaze(num_cols=num_cols, num_rows=num_rows)
         env = Maze(generator=generator_maze)
 
-    env = jumanji.wrappers.AutoResetWrapper(env)
     env = jumanji.wrappers.JumanjiToGymWrapper(env)
     env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
     env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -174,4 +418,6 @@ def create_jumanji_env(env_id, config):
         env = JumanjiWrapperKnapsack(env)
     elif env_id == 'Maze-v0':
         env = JumanjiWrapperMaze(env)
+        if constant_maze:
+            env.set_seed_constant(0)
     return env

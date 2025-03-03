@@ -65,60 +65,65 @@
 # env = jumanji.make('TSP-v1')
 
 
-def knapsack(values, weights, total_budget, max_items):
-    """
-    Calculate the optimal value of the knapsack.
+# def knapsack(values, weights, total_budget, max_items):
+#     """
+#     Calculate the optimal value of the knapsack.
 
-    Args:
-        values (list): List of item values.
-        weights (list): List of item weights.
-        total_budget (int): Maximum weight capacity of the knapsack.
-        max_items (int): Maximum number of items to include.
+#     Args:
+#         values (list): List of item values.
+#         weights (list): List of item weights.
+#         total_budget (int): Maximum weight capacity of the knapsack.
+#         max_items (int): Maximum number of items to include.
 
-    Returns:
-        int: Optimal value of the knapsack.
-    """
+#     Returns:
+#         int: Optimal value of the knapsack.
+#     """
 
-    # Initialize a 3D table to store the maximum value at each subproblem
-    dp = [[[0 for _ in range(total_budget + 1)] for _ in range(max_items + 1)] for _ in range(len(values) + 1)]
+#     # Initialize a 3D table to store the maximum value at each subproblem
+#     dp = [[[0 for _ in range(total_budget + 1)] for _ in range(max_items + 1)] for _ in range(len(values) + 1)]
 
-    # Iterate over each item
-    for i in range(1, len(values) + 1):
-        # Iterate over each possible number of items
-        for j in range(1, min(i, max_items) + 1):
-            # Iterate over each possible weight
-            for w in range(1, total_budget + 1):
-                # If the current item's weight exceeds the current weight limit, skip it
-                if weights[i - 1] > w:
-                    dp[i][j][w] = dp[i - 1][j][w]
-                # Otherwise, choose the maximum value between including and excluding the current item
-                else:
-                    dp[i][j][w] = max(dp[i - 1][j][w], dp[i - 1][j - 1][w - weights[i - 1]] + values[i - 1])
+#     # Iterate over each item
+#     for i in range(1, len(values) + 1):
+#         # Iterate over each possible number of items
+#         for j in range(1, min(i, max_items) + 1):
+#             # Iterate over each possible weight
+#             for w in range(1, total_budget + 1):
+#                 # If the current item's weight exceeds the current weight limit, skip it
+#                 if weights[i - 1] > w:
+#                     dp[i][j][w] = dp[i - 1][j][w]
+#                 # Otherwise, choose the maximum value between including and excluding the current item
+#                 else:
+#                     dp[i][j][w] = max(dp[i - 1][j][w], dp[i - 1][j - 1][w - weights[i - 1]] + values[i - 1])
 
-    # Return the maximum value in the table
-    return dp[-1][-1][-1]
+#     # Return the maximum value in the table
+#     return dp[-1][-1][-1]
 
-# Example usage:
-values = [60, 100, 120, 240]
-weights = [10, 20, 30, 30]
-total_budget = 50
-max_items = 2
+# # Example usage:
+# values = [60, 100, 120, 240]
+# weights = [10, 20, 30, 30]
+# total_budget = 50
+# max_items = 2
 
-optimal_value = knapsack(values, weights, total_budget, max_items)
-print(f"Optimal knapsack value: {optimal_value}")
+# optimal_value = knapsack(values, weights, total_budget, max_items)
+# print(f"Optimal knapsack value: {optimal_value}")
 
 
+import jax
 import jumanji.wrappers
 from jumanji.environments import Knapsack 
 from jumanji.environments.packing.knapsack.generator import RandomGenerator
 
+    
+key = jax.random.PRNGKey(0)
 generator_knapsack = RandomGenerator(total_budget=10, num_items=5)
 env = Knapsack(generator=generator_knapsack)
 env = jumanji.wrappers.JumanjiToGymWrapper(env)
-state, _ = env.reset()
+state, _ = env.reset(seed=0)
 
 for i in range(5):
-    state, reward, terminate, truncate, info = env.step(i)
-    print(reward, terminate, truncate, info)
+    state, _ = env.reset(seed=1)
+    print(state)
+    # state, reward, terminate, truncate, info = env.step(i)
+    # print(reward, terminate, truncate, info)
 
 print('done')

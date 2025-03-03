@@ -20,7 +20,7 @@ total_budget:       2
 env_wrapper:        minmax
 agent:               PPO_quantum_jumanji
 total_timesteps:    10000
-num_envs:           2
+num_envs:           1
 num_steps:          128
 anneal_lr:          True
 gamma:              0.99

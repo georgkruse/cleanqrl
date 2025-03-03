@@ -16,6 +16,7 @@ from torch.distributions.categorical import Categorical
 from ray.train._internal.session import get_session
 import pennylane as qml
 from cleanqrl.wrapper import create_jumanji_env
+from cleanqrl.wrapper_utils import knapsack_converter
 
 def make_env(env_id, config):
     def thunk():
@@ -25,7 +26,33 @@ def make_env(env_id, config):
 
     return thunk
 
+def cost_hamiltonian_ansatz(h, J, input_scaling, weights, wires, layers, num_actions, agent_type):
+    # wmax = max(
+    #     np.max(np.abs(list(h.values()))), np.max(np.abs(list(h.values())))
+    # )  # Normalizing the Hamiltonian is a good idea
 
+    # Apply the initial layer of Hadamard gates to all qubits
+    for i in wires:
+        qml.Hadamard(wires=i)
+    # repeat p layers the circuit shown in Fig. 1
+    for layer in range(layers):
+        # ---------- COST HAMILTONIAN ----------
+        for idx in wires:  # single-qubit terms
+            qml.RZ(input_scaling[layer] * h[:,idx], wires=idx)
+
+        for idx in range(J.shape[1]):  # two-qubit terms
+            qml.CNOT(wires=[int(J[:,idx,0]), int(J[:,idx,1])])
+            qml.RZ(input_scaling[layer] * J[:,idx,2], wires=int(J[:,idx,1]))
+            qml.CNOT(wires=[int(J[:,idx,0]), int(J[:,idx,1])])
+        # ---------- MIXER HAMILTONIAN ----------
+        for i in wires:
+            qml.RX(weights[layer], wires=i)
+
+    if agent_type == 'actor':
+        return [qml.expval(qml.PauliZ(i)) for i in range(num_actions)] 
+    elif agent_type == 'critic':
+        return [qml.expval(qml.PauliZ(0))]
+    
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions, agent_type):
     
     # This block needs to be adapted depending on the environment. 
@@ -61,10 +88,58 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
         return [qml.expval(qml.PauliZ(0))]
 
 
+# class PPOAgentQuantumJumanji(nn.Module):
+#     def __init__(self, envs, config):
+#         super().__init__()
+#         self.config = config
+#         self.envs = envs
+#         self.num_features = np.array(envs.single_observation_space.shape).prod()
+#         self.num_actions = envs.single_action_space.n
+#         self.num_qubits = config["num_qubits"]
+#         self.num_layers = config["num_layers"]
+#         self.wires = range(self.num_qubits)
+
+#         # input and output scaling are always initialized as ones      
+#         self.input_scaling_critic = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True)
+#         self.output_scaling_critic = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+#         # trainable weights are initialized randomly between -pi and pi
+#         self.weights_critic = nn.Parameter(torch.rand(self.num_layers,self.num_qubits*2)*2*torch.pi-torch.pi, requires_grad=True)
+        
+#         # input and output scaling are always initialized as ones      
+#         self.input_scaling_actor = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True)
+#         self.output_scaling_actor = nn.Parameter(torch.ones(self.num_actions), requires_grad=True)
+#         # trainable weights are initialized randomly between -pi and pi
+#         self.weights_actor = nn.Parameter(torch.rand(self.num_layers,self.num_qubits*2)*2*torch.pi-torch.pi, requires_grad=True)
+        
+#         device = qml.device(config["device"], wires = self.wires)
+#         self.quantum_circuit = qml.QNode(cost_hamiltonian_ansatz, device, diff_method = config["diff_method"], interface = "torch")
+        
+
+#     def get_value(self, x):
+#         offset, h, J = self.envs.envs[0].convert_state_to_cost_hamiltonian(x[0])
+#         value = self.quantum_circuit(h, J, self.input_scaling_critic, self.weights_critic, 
+#                                      self.wires, self.num_layers, self.num_actions, 'critic')
+#         value = torch.stack(value, dim = 1)
+#         value = value * self.output_scaling_critic
+#         return value
+
+
+#     def get_action_and_value(self, x, action=None):
+#         offset, h, J = self.envs.envs[0].convert_state_to_cost_hamiltonian(x[0])
+#         logits = self.quantum_circuit(h, J, self.input_scaling_actor, self.weights_actor, 
+#                                       self.wires, self.num_layers, self.num_actions, 'actor')
+#         logits = torch.stack(logits, dim = 1)
+#         logits = logits * self.output_scaling_actor
+#         probs = Categorical(logits=logits)
+#         if action is None:
+#             action = probs.sample()
+#         return action, probs.log_prob(action), probs.entropy(), self.get_value(x)
+
 class PPOAgentQuantumJumanji(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
+        self.envs = envs
         self.num_features = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
@@ -72,23 +147,24 @@ class PPOAgentQuantumJumanji(nn.Module):
         self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones      
-        self.input_scaling_critic = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True)
+        self.input_scaling_critic = nn.Parameter(torch.ones(self.num_layers,), requires_grad=True)
         self.output_scaling_critic = nn.Parameter(torch.tensor(1.0), requires_grad=True)
         # trainable weights are initialized randomly between -pi and pi
-        self.weights_critic = nn.Parameter(torch.rand(self.num_layers,self.num_qubits*2)*2*torch.pi-torch.pi, requires_grad=True)
+        self.weights_critic = nn.Parameter(torch.rand(self.num_layers,)*2*torch.pi-torch.pi, requires_grad=True)
         
         # input and output scaling are always initialized as ones      
-        self.input_scaling_actor = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True)
+        self.input_scaling_actor = nn.Parameter(torch.ones(self.num_layers,), requires_grad=True)
         self.output_scaling_actor = nn.Parameter(torch.ones(self.num_actions), requires_grad=True)
         # trainable weights are initialized randomly between -pi and pi
-        self.weights_actor = nn.Parameter(torch.rand(self.num_layers,self.num_qubits*2)*2*torch.pi-torch.pi, requires_grad=True)
+        self.weights_actor = nn.Parameter(torch.rand(self.num_layers,)*2*torch.pi-torch.pi, requires_grad=True)
         
         device = qml.device(config["device"], wires = self.wires)
-        self.quantum_circuit = qml.QNode(hardware_efficient_ansatz, device, diff_method = config["diff_method"], interface = "torch")
+        self.quantum_circuit = qml.QNode(cost_hamiltonian_ansatz, device, diff_method = config["diff_method"], interface = "torch")
         
 
     def get_value(self, x):
-        value = self.quantum_circuit(x, self.input_scaling_critic, self.weights_critic, 
+        offset, h, J = knapsack_converter(x, self.envs)
+        value = self.quantum_circuit(h, J, self.input_scaling_critic, self.weights_critic, 
                                      self.wires, self.num_layers, self.num_actions, 'critic')
         value = torch.stack(value, dim = 1)
         value = value * self.output_scaling_critic
@@ -96,7 +172,8 @@ class PPOAgentQuantumJumanji(nn.Module):
 
 
     def get_action_and_value(self, x, action=None):
-        logits = self.quantum_circuit(x, self.input_scaling_actor, self.weights_actor, 
+        offset, h, J = knapsack_converter(x, self.envs)
+        logits = self.quantum_circuit(h, J, self.input_scaling_actor, self.weights_actor, 
                                       self.wires, self.num_layers, self.num_actions, 'actor')
         logits = torch.stack(logits, dim = 1)
         logits = logits * self.output_scaling_actor
@@ -155,7 +232,7 @@ def ppo_quantum_jumanji(config):
     else:
         session = get_session()
         report_path = session.storage.trial_fs_path 
-        name = session.trial_id
+        name = session.storage.trial_fs_path.split('/')[-1] 
     
     if config['wandb']:
         wandb.init(

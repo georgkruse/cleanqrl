@@ -15,6 +15,7 @@ gpus_per_worker:        0
 env_id:              Maze-v0
 num_cols:            4
 num_rows:            4
+# constant_maze:       True
 # env_id:              Knapsack-v1
 # num_items:          4
 # total_budget:       2
