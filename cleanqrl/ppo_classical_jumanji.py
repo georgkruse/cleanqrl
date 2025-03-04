@@ -4,6 +4,7 @@ import jumanji.environments
 import jumanji.wrappers
 import ray
 import json
+import random
 import time
 import wandb
 import yaml
@@ -91,6 +92,9 @@ def ppo_classical_jumanji(config):
     if target_kl == "None":
         target_kl = None
 
+    if config["seed"] == "None":
+        config["seed"] = None
+        
     batch_size = int(num_envs * num_steps)
     minibatch_size = int(batch_size // num_minibatches)
     num_iterations = total_timesteps // batch_size
@@ -117,11 +121,14 @@ def ppo_classical_jumanji(config):
         )
 
     # TRY NOT TO MODIFY: seeding
-    # if 'seed' in config.keys():
-    #     random.seed(seed)
-    #     np.random.seed(seed)
-    #     torch.manual_seed(seed)
-    seed = np.random.randint(0,1e9)
+    if config["seed"] is None:
+        seed = np.random.randint(0,1e9)
+    else:
+        seed = config["seed"]
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
     
@@ -319,6 +326,7 @@ if __name__ == "__main__":
         total_timesteps: int = 1000000 # Total timesteps for the experiment
         learning_rate: float = 3e-4 # Learning rate of the optimizer
         num_envs: int = 1 # Number of parallel environments
+        seed: int = None # Seed for reproducibility
         num_steps: int = 2048 # Steps per environment per policy rollout
         anneal_lr: bool = True # Toggle for learning rate annealing
         gamma: float = 0.9 # Discount factor gamma

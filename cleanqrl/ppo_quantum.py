@@ -8,6 +8,7 @@ import yaml
 from datetime import datetime
 import gymnasium as gym
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -48,9 +49,9 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
         else:
             for i in range(len(wires)):
                 qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
-    # TODO: make observation dependent on num_actions
+
     if agent_type == 'actor':
-        return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+        return [qml.expval(qml.PauliZ(wires = wire)) for wire in wires[:num_actions]]
     elif agent_type == 'critic':
         return [qml.expval(qml.PauliZ(0))]
 
@@ -64,6 +65,9 @@ class PPOAgentQuantum(nn.Module):
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
+
+        assert self.num_qubits >= self.num_features, "Number of qubits must be greater than or equal to the number of features"
+        assert self.num_qubits >= self.num_actions, "Number of qubits must be greater than or equal to the number of actions"
 
         # input and output scaling are always initialized as ones      
         self.input_scaling_critic = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True)
@@ -137,6 +141,9 @@ def ppo_quantum(config):
     if target_kl == "None":
         target_kl = None
 
+    if config["seed"] == "None":
+        config["seed"] = None
+
     batch_size = int(num_envs * num_steps)
     minibatch_size = int(batch_size // num_minibatches)
     num_iterations = total_timesteps // batch_size
@@ -163,11 +170,14 @@ def ppo_quantum(config):
         )
 
     # TRY NOT TO MODIFY: seeding
-    # if 'seed' in config.keys():
-    #     random.seed(seed)
-    #     np.random.seed(seed)
-    #     torch.manual_seed(seed)
-    seed = np.random.randint(0,1e9)
+    if config["seed"] is None:
+        seed = np.random.randint(0,1e9)
+    else:
+        seed = config["seed"]
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
@@ -367,6 +377,7 @@ if __name__ == "__main__":
         # Algorithm parameters
         total_timesteps: int = 1000000 # Total timesteps for the experiment
         num_envs: int = 1 # Number of parallel environments
+        seed: int = None # Seed for reproducibility
         num_steps: int = 2048 # Steps per environment per policy rollout
         anneal_lr: bool = True # Toggle for learning rate annealing
         lr_input_scaling: float = 0.01  # Learning rate for input scaling

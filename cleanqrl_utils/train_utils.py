@@ -43,5 +43,5 @@ agent_switch = {
     # "reinforce_quantum_jumanji": reinforce_quantum_jumanji,
 }
 
-def train_agent(config):
+def  train_agent(config):
     agent_switch[config["agent"].lower()](config)

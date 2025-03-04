@@ -7,6 +7,7 @@ import yaml
 from datetime import datetime
 import gymnasium as gym
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -67,6 +68,9 @@ def reinforce_classical_continuous(config):
     lr = config["lr"]
     gamma = config["gamma"]
 
+    if config["seed"] == "None":
+        config["seed"] = None
+
     if not ray.is_initialized():
         report_path = config["path"]
         name = config['trial_name']
@@ -87,6 +91,15 @@ def reinforce_classical_continuous(config):
             save_code=True,
             dir=report_path
         )
+    
+    if config["seed"] is None:
+        seed = np.random.randint(0,1e9)
+    else:
+        seed = config["seed"]
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
@@ -190,6 +203,7 @@ if __name__ == '__main__':
         
         # Algorithm parameters
         num_envs: int = 2  # Number of environments
+        seed: int = None # Seed for reproducibility
         total_timesteps: int = 200000  # Total number of timesteps
         gamma: float = 0.9  # discount factor
         lr: float = 0.001  # Learning rate for network weights

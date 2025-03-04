@@ -24,7 +24,6 @@ def make_env(env_id, config):
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
-
     return thunk
 
 
@@ -44,8 +43,8 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
         else:
             for i in range(len(wires)):
                 qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
-    # TODO: make observation dependent on num_actions
-    return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+                
+    return [qml.expval(qml.PauliZ(wires = wire)) for wire in wires[:num_actions]]
 
 
 class DQNAgentQuantum(nn.Module):
@@ -73,11 +72,9 @@ class DQNAgentQuantum(nn.Module):
         logits = logits * self.output_scaling    
         return logits
 
-
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
-
 
 def log_metrics(config, metrics, report_path=None):
     if config['wandb']:
@@ -88,7 +85,6 @@ def log_metrics(config, metrics, report_path=None):
         with open(os.path.join(report_path, 'result.json'), "a") as f:
             json.dump(metrics, f)
             f.write("\n")
-
 
 def dqn_quantum(config: dict):
     cuda = config["cuda"]
@@ -108,6 +104,9 @@ def dqn_quantum(config: dict):
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
+
+    if config["seed"] == "None":
+        config["seed"] = None
 
     if not ray.is_initialized():
         report_path = config["path"]
@@ -130,11 +129,14 @@ def dqn_quantum(config: dict):
             dir=report_path
         )
     # TRY NOT TO MODIFY: seeding
-    # if 'seed' in config.keys():
-    #     random.seed(seed)
-    #     np.random.seed(seed)
-    #     torch.manual_seed(seed)
-    seed = np.random.randint(0,1e9)
+    if config["seed"] is None:
+        seed = np.random.randint(0,1e9)
+    else:
+        seed = config["seed"]
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
     # env setup
@@ -256,6 +258,7 @@ if __name__ == '__main__':
         
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
+        seed: int = None # Seed for reproducibility
         buffer_size: int = 10000  # Size of the replay buffer
         total_timesteps: int = 10000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration
