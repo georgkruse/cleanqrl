@@ -77,6 +77,9 @@ def dqn_classical(config: dict):
     tau = config["tau"]
     lr = config["lr"]
 
+    if config["seed"] == "None":
+        config["seed"] = None
+
     if not ray.is_initialized():
         report_path = config["path"]
         name = config['trial_name']
@@ -98,11 +101,15 @@ def dqn_classical(config: dict):
             dir=report_path
         )
     # TRY NOT TO MODIFY: seeding
-    # if 'seed' in config.keys():
-    #     random.seed(seed)
-    #     np.random.seed(seed)
-    #     torch.manual_seed(seed)
-    seed = np.random.randint(0,1e9)
+    if config["seed"] is None:
+        seed = np.random.randint(0,1e9)
+    else:
+        seed = config["seed"]
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
     # env setup
@@ -218,6 +225,7 @@ if __name__ == '__main__':
         
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
+        seed: int = None # Seed for reproducibility
         buffer_size: int = 10000  # Size of the replay buffer
         total_timesteps: int = 100000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration

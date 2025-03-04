@@ -10,7 +10,7 @@ from cleanqrl_utils.plotting_utils import plot_tune_run
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = 'configs/ppo_classical.yaml'
+    config_path = 'configs/tune/reinforce_quantum.yaml'
 
     # Load the config file 
     with open(config_path) as f:

@@ -7,6 +7,7 @@ import wandb
 from datetime import datetime
 import gymnasium as gym
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -40,8 +41,8 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
         else:
             for i in range(len(wires)):
                 qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
-    # TODO: make observation dependent on num_actions
-    return [qml.expval(qml.PauliZ(0)@qml.PauliZ(1)), qml.expval(qml.PauliZ(2)@qml.PauliZ(3))]
+    
+    return [qml.expval(qml.PauliZ(wires = wire)) for wire in wires[:num_actions]]
 
 
 class ReinforceAgentQuantum(nn.Module):
@@ -51,6 +52,10 @@ class ReinforceAgentQuantum(nn.Module):
         self.num_features = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
+
+        assert self.num_qubits >= self.num_features, "Number of qubits must be greater than or equal to the number of features"
+        assert self.num_qubits >= self.num_actions, "Number of qubits must be greater than or equal to the number of actions"
+
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
@@ -93,6 +98,9 @@ def reinforce_quantum(config):
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
 
+    if config["seed"] == "None":
+        config["seed"] = None
+
     if not ray.is_initialized():
         report_path = config["path"]
         name = config['trial_name']
@@ -113,6 +121,15 @@ def reinforce_quantum(config):
             save_code=True,
             dir=report_path
         )
+
+    if config["seed"] is None:
+        seed = np.random.randint(0,1e9)
+    else:
+        seed = config["seed"]
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and config["cuda"]) else "cpu")
     assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
@@ -189,6 +206,7 @@ def reinforce_quantum(config):
                     metrics['global_step'] = global_step
                     metrics["policy_loss"] = loss.item()
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
+                    print("SPS", metrics["SPS"])
                     log_metrics(config, metrics, report_path)
 
             if global_episodes % 10 == 0 and not ray.is_initialized():
@@ -217,6 +235,7 @@ if __name__ == '__main__':
         
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
+        seed: int = None # Seed for reproducibility
         total_timesteps: int = 100000  # Total number of timesteps
         gamma: float = 0.99  # discount factor
         lr_input_scaling: float = 0.01  # Learning rate for input scaling
