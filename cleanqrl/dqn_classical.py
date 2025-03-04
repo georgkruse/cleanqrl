@@ -4,7 +4,7 @@ import random
 import time
 import ray 
 import yaml 
-import datetime
+from datetime import datetime
 import json
 import wandb
 from dataclasses import dataclass
