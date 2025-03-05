@@ -5,6 +5,8 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -265,14 +267,18 @@ def ppo_quantum_jumanji(config):
     dones = torch.zeros((num_steps, num_envs)).to(device)
     values = torch.zeros((num_steps, num_envs)).to(device)
 
+    # global parameters to log
     global_step = 0
+    global_episodes = 0
+    print_interval = 50
+    episode_returns = deque(maxlen=print_interval)
+    episode_approximation_ratio = deque(maxlen=print_interval)
+
+    # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     next_obs, _ = envs.reset(seed=seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(num_envs).to(device)
-    global_episodes = 0
-    episode_returns = []
-    episode_approximation_ratio = []
 
     for iteration in range(1, num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -325,10 +331,10 @@ def ppo_quantum_jumanji(config):
                             )
                         log_metrics(config, metrics, report_path)
 
-                if global_episodes % 10 == 0 and not ray.is_initialized():
-                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns[-10:])}"
+                if global_episodes % print_interval == 0 and not ray.is_initialized():
+                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
                     if "approximation_ratio" in infos.keys():
-                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio[-10:])}"
+                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
                     print(logging_info)
 
         # bootstrap value if not done
@@ -495,7 +501,7 @@ if __name__ == "__main__":
         datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
     )
     config["path"] = os.path.join(
-        os.path.dirname(os.getcwd()), config["trial_path"], config["trial_name"]
+        Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
     )
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated

@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -181,12 +182,16 @@ def reinforce_quantum(config):
         ]
     )
 
+    # global parameters to log
     global_step = 0
+    global_episodes = 0
+    print_interval = 50
+    episode_returns = deque(maxlen=print_interval)
+    
+    # TRY NOT TO MODIFY: start the game  
     start_time = time.time()
     obs, _ = envs.reset()
     obs = torch.Tensor(obs).to(device)
-    global_episodes = 0
-    episode_returns = []
 
     while global_step < total_timesteps:
         log_probs = []
@@ -248,12 +253,12 @@ def reinforce_quantum(config):
                     print("SPS", metrics["SPS"])
                     log_metrics(config, metrics, report_path)
 
-            if global_episodes % 10 == 0 and not ray.is_initialized():
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
                     "Global step: ",
                     global_step,
                     " Mean return: ",
-                    np.mean(episode_returns[-1:]),
+                    np.mean(episode_returns),
                 )
 
     if config["save_model"]:
@@ -276,7 +281,7 @@ if __name__ == "__main__":
         wandb: bool = True  # Use wandb to log experiment data
 
         # Environment parameters
-        env_id: str = "CartPole-v1"  # Environment ID
+        env_id: str = "FrozenLake-v1"  # Environment ID
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
@@ -287,9 +292,9 @@ if __name__ == "__main__":
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
-        num_qubits: int = 4  # Number of qubits
-        num_layers: int = 2  # Number of layers in the quantum circuit
-        device: str = "default.qubit"  # Quantum device
+        num_qubits: int = 6  # Number of qubits
+        num_layers: int = 4  # Number of layers in the quantum circuit
+        device: str = "lightning.qubit"  # Quantum device
         diff_method: str = "backprop"  # Differentiation method
         save_model: bool = True  # Save the model after the run
 

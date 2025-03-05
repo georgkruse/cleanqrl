@@ -249,8 +249,9 @@ if __name__ == '__main__':
     
     # Based on the current time, create a unique name for the experiment
     config['trial_name'] = datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config['trial_name']
-    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config['trial_path'], config['trial_name'])
-
+    config["path"] = os.path.join(
+        Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
+    )
     # Create the directory and save a copy of the config file so that the experiment can be replicated
     os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
     config_path = os.path.join(config['path'], 'config.yml')

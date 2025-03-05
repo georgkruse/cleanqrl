@@ -1,126 +1,236 @@
 # This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
 import json
 import os
-import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
 import pennylane as qml
 import ray
+import sympy as sp
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from torch.distributions.normal import Normal
+from torch.distributions.categorical import Categorical
+from wrapper import create_jumanji_env
 
 
 def make_env(env_id, config):
     def thunk():
+        env = create_jumanji_env(env_id, config)
 
-        env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(
-            env
-        )  # deal with dm_control's Dict observation space
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
 
 
-def hardware_efficient_ansatz(
-    x, input_scaling, weights, wires, layers, num_actions, agent_type
+def knapsack_formulate_qubo_unbalanced(weights, values, max_weight, lambdas=None):
+    """
+    Formulates the QUBO with the unbalanced penalization method.
+    This means the QUBO does not use additional slack variables.
+    Params:
+        lambdas: Correspond to the penalty factors in the unbalanced formulation.
+    """
+    if lambdas is None:
+        lambdas = [0.96, 0.0371]
+    num_items = len(values)
+    x = [sp.symbols(f"{i}") for i in range(num_items)]
+    cost = 0
+    constraint = 0
+
+    for i in range(num_items):
+        cost -= x[i] * values[i]
+        constraint += x[i] * weights[i]
+
+    H_constraint = max_weight - constraint
+    H_constraint_taylor = (
+        1 - lambdas[0] * H_constraint + 0.5 * lambdas[1] * H_constraint**2
+    )
+    H_total = cost + H_constraint_taylor
+    H_total = H_total.expand()
+    H_total = sp.simplify(H_total)
+
+    for i in range(len(x)):
+        H_total = H_total.subs(x[i] ** 2, x[i])
+
+    H_total = H_total.expand()
+    H_total = sp.simplify(H_total)
+
+    "Transform into QUBO matrix"
+    coefficients = H_total.as_coefficients_dict()
+
+    # Remove the offset
+    try:
+        offset = coefficients.pop(1)
+    except IndexError:
+        print("Warning: No offset found in coefficients. Using default of 0.")
+        offset = 0
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        offset = 0
+
+    # Get the QUBO
+    QUBO = np.zeros((num_items, num_items))
+    for key, value in coefficients.items():
+        key = str(key)
+        parts = key.split("*")
+        if len(parts) == 1:
+            QUBO[int(parts[0]), int(parts[0])] = value
+        elif len(parts) == 2:
+            QUBO[int(parts[0]), int(parts[1])] = value / 2
+            QUBO[int(parts[1]), int(parts[0])] = value / 2
+    return offset, QUBO
+
+
+def knapsack_convert_QUBO_to_ising(offset, Q):
+    """Convert the matrix Q of Eq.3 into Eq.13 elements J and h"""
+    n_qubits = len(Q)  # Get the number of qubits (variables) in the QUBO matrix
+    # Create default dictionaries to store h and pairwise interactions J
+    h = np.zeros(Q.shape[0])
+    J = []
+
+    # Loop over each qubit (variable) in the QUBO matrix
+    for i in range(n_qubits):
+        # Update the magnetic field for qubit i based on its diagonal element in Q
+        h[i] -= Q[i, i] / 2
+        # Update the offset based on the diagonal element in Q
+        offset += Q[i, i] / 2
+        # Loop over other qubits (variables) to calculate pairwise interactions
+        for j in range(i + 1, n_qubits):
+            # Update the pairwise interaction strength (J) between qubits i and j
+            J.append([i, j, Q[i, j] / 4])
+            # Update the magnetic fields for     qubits i and j based on their interactions in Q
+            h[i] -= Q[i, j] / 4
+            h[j] -= Q[i, j] / 4
+            # Update the offset based on the interaction strength between qubits i and j
+            offset += Q[i, j] / 4
+    J = np.stack(J)
+    J = np.expand_dims(
+        J, axis=0
+    )  # Return the magnetic fields, pairwise interactions, and the updated offset
+    h = np.expand_dims(
+        h, axis=0
+    )  # Return the magnetic fields, pairwise interactions, and the updated offset
+    return offset, h, J
+
+
+def knapsack_state_converter(state, envs):
+    state = state[0]
+    num_items = envs.envs[0].unwrapped.num_items
+    total_budget = envs.envs[0].unwrapped.total_budget
+    values = state[num_items * 2 : num_items * 3]
+    weights = state[-num_items:]
+
+    offset, QUBO = knapsack_formulate_qubo_unbalanced(weights, values, total_budget)
+    offset, h, J = knapsack_convert_QUBO_to_ising(offset, QUBO)
+
+    return offset, h, J
+
+
+def cost_hamiltonian_ansatz(
+    h, J, input_scaling, weights, wires, layers, num_actions, agent_type
 ):
+    # wmax = max(
+    #     np.max(np.abs(list(h.values()))), np.max(np.abs(list(h.values())))
+    # )  # Normalizing the Hamiltonian is a good idea
+    tensor_h = torch.from_numpy(h)
+    indices_J = J[0, :, :2].astype(np.int16)
+    tensor_J = torch.from_numpy(J[:, :, 2])
+    # Apply the initial layer of Hadamard gates to all qubits
+    for i in wires:
+        qml.Hadamard(wires=i)
+    # repeat p layers the circuit shown in Fig. 1
     for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+        # ---------- COST HAMILTONIAN ----------
+        for idx in wires:  # single-qubit terms
+            qml.RZ(input_scaling[layer] * tensor_h[:, idx], wires=idx)
 
-        for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires=[wire])
-
-        for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
-
-        if len(wires) == 2:
-            qml.CZ(wires=wires)
-        else:
-            for i in range(len(wires)):
-                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
+        for idx in range(J.shape[1]):
+            qml.CNOT(wires=[indices_J[idx, 0], indices_J[idx, 1]])
+            qml.RZ(input_scaling[layer] * tensor_J[:, idx], wires=indices_J[idx, 1])
+            qml.CNOT(wires=[indices_J[idx, 0], indices_J[idx, 1]])
+        # ---------- MIXER HAMILTONIAN ----------
+        for i in wires:
+            qml.RX(weights[layer], wires=i)
 
     if agent_type == "actor":
-        return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+        return [qml.expval(qml.PauliZ(i)) for i in range(num_actions)]
     elif agent_type == "critic":
-        return [qml.expval(qml.PauliX(0))]
+        return [qml.expval(qml.PauliZ(0))]
 
 
-class PPOAgentQuantumContinuous(nn.Module):
+class PPOAgentQuantumJumanji(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
+        self.envs = envs
         self.num_features = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = np.prod(envs.single_action_space.shape)
+        self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
-        assert (
-            self.num_qubits >= self.num_features
-        ), "Number of qubits must be greater than or equal to the number of features"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
-
         # input and output scaling are always initialized as ones
         self.input_scaling_critic = nn.Parameter(
-            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
+            torch.ones(
+                self.num_layers,
+            ),
+            requires_grad=True,
         )
         self.output_scaling_critic = nn.Parameter(torch.tensor(1.0), requires_grad=True)
         # trainable weights are initialized randomly between -pi and pi
         self.weights_critic = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.rand(
+                self.num_layers,
+            )
+            * 2
+            * torch.pi
+            - torch.pi,
             requires_grad=True,
         )
 
         # input and output scaling are always initialized as ones
         self.input_scaling_actor = nn.Parameter(
-            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
+            torch.ones(
+                self.num_layers,
+            ),
+            requires_grad=True,
         )
         self.output_scaling_actor = nn.Parameter(
             torch.ones(self.num_actions), requires_grad=True
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights_actor = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.rand(
+                self.num_layers,
+            )
+            * 2
+            * torch.pi
+            - torch.pi,
             requires_grad=True,
-        )
-
-        # additional trainable parameters for the variance of the continuous actions
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, np.prod(envs.single_action_space.shape))
         )
 
         device = qml.device(config["device"], wires=self.wires)
         self.quantum_circuit = qml.QNode(
-            hardware_efficient_ansatz,
+            cost_hamiltonian_ansatz,
             device,
             diff_method=config["diff_method"],
             interface="torch",
         )
 
+        # We will need to add an additional converter for the state
+        self.state_converter = knapsack_state_converter
+
     def get_value(self, x):
+        offset, h, J = self.state_converter(x, self.envs)
         value = self.quantum_circuit(
-            x,
+            h,
+            J,
             self.input_scaling_critic,
             self.weights_critic,
             self.wires,
@@ -133,8 +243,10 @@ class PPOAgentQuantumContinuous(nn.Module):
         return value
 
     def get_action_and_value(self, x, action=None):
-        action_mean = self.quantum_circuit(
-            x,
+        offset, h, J = self.state_converter(x, self.envs)
+        logits = self.quantum_circuit(
+            h,
+            J,
             self.input_scaling_actor,
             self.weights_actor,
             self.wires,
@@ -142,19 +254,12 @@ class PPOAgentQuantumContinuous(nn.Module):
             self.num_actions,
             "actor",
         )
-        action_mean = torch.stack(action_mean, dim=1)
-        action_mean = action_mean * self.output_scaling_actor
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
+        logits = torch.stack(logits, dim=1)
+        logits = logits * self.output_scaling_actor
+        probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return (
-            action,
-            probs.log_prob(action).sum(1),
-            probs.entropy().sum(1),
-            self.get_value(x),
-        )
+        return action, probs.log_prob(action), probs.entropy(), self.get_value(x)
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -168,7 +273,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def ppo_quantum_continuous(config):
+def ppo_quantum_jumanji(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
     num_minibatches = config["num_minibatches"]
@@ -193,9 +298,6 @@ def ppo_quantum_continuous(config):
 
     if target_kl == "None":
         target_kl = None
-
-    if config["seed"] == "None":
-        config["seed"] = None
 
     batch_size = int(num_envs * num_steps)
     minibatch_size = int(batch_size // num_minibatches)
@@ -222,27 +324,24 @@ def ppo_quantum_continuous(config):
             dir=report_path,
         )
 
-    if config["seed"] is None:
-        seed = np.random.randint(0, 1e9)
-    else:
-        seed = config["seed"]
+    # TRY NOT TO MODIFY: seeding
+    # if 'seed' in config.keys():
+    #     random.seed(seed)
+    #     np.random.seed(seed)
+    #     torch.manual_seed(seed)
+    seed = np.random.randint(0, 1e9)
 
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
+    # assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
-    device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
-    assert (
-        env_id in gym.envs.registry.keys()
-    ), f"{env_id} is not a valid gymnasium environment"
-
-    # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv(
+        [make_env(env_id, config) for i in range(num_envs)],
+    )
     assert isinstance(
-        envs.single_action_space, gym.spaces.Box
-    ), "only continuous action space is supported"
+        envs.single_action_space, gym.spaces.Discrete
+    ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantumContinuous(envs, config).to(
+    agent = PPOAgentQuantumJumanji(envs, config).to(
         device
     )  # This is what I need to change to fit quantum into the picture
     optimizer = optim.Adam(
@@ -255,7 +354,7 @@ def ppo_quantum_continuous(config):
             {"params": agent.weights_critic, "lr": lr_weights},
         ]
     )
-    # ALGO Logic: Storage setup
+
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(
         device
     )
@@ -267,17 +366,14 @@ def ppo_quantum_continuous(config):
     dones = torch.zeros((num_steps, num_envs)).to(device)
     values = torch.zeros((num_steps, num_envs)).to(device)
 
-    # global parameters to log
     global_step = 0
-    global_episodes = 0
-    print_interval = 50
-    episode_returns = deque(maxlen=print_interval)
-
-    # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     next_obs, _ = envs.reset(seed=seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(num_envs).to(device)
+    global_episodes = 0
+    episode_returns = []
+    episode_approximation_ratio = []
 
     for iteration in range(1, num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -310,6 +406,8 @@ def ppo_quantum_continuous(config):
                 next_done
             ).to(device)
 
+            # If the episode is finished, report the metrics
+            # Here addtional logging can be added
             if "episode" in infos:
                 for idx, finished in enumerate(infos["_episode"]):
                     if finished:
@@ -319,15 +417,20 @@ def ppo_quantum_continuous(config):
                         metrics["episode_reward"] = infos["episode"]["r"].tolist()[idx]
                         metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                         metrics["global_step"] = global_step
+                        if "approximation_ratio" in infos.keys():
+                            metrics["approximation_ratio"] = infos[
+                                "approximation_ratio"
+                            ][idx]
+                            episode_approximation_ratio.append(
+                                metrics["approximation_ratio"]
+                            )
                         log_metrics(config, metrics, report_path)
 
-                if global_episodes % print_interval == 0 and not ray.is_initialized():
-                    print(
-                        "Global step: ",
-                        global_step,
-                        " Mean return: ",
-                        np.mean(episode_returns),
-                    )
+                if global_episodes % 10 == 0 and not ray.is_initialized():
+                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns[-10:])}"
+                    if "approximation_ratio" in infos.keys():
+                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio[-10:])}"
+                    print(logging_info)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -365,7 +468,7 @@ def ppo_quantum_continuous(config):
                 mb_inds = b_inds[start:end]
 
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
-                    b_obs[mb_inds], b_actions[mb_inds]
+                    b_obs[mb_inds], b_actions.long()[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
@@ -420,6 +523,7 @@ def ppo_quantum_continuous(config):
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         metrics = {}
         metrics["lr_input_scaling"] = optimizer.param_groups[0]["lr"]
@@ -450,24 +554,24 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "ppo_quantum_continuous"  # Name of the trial
+        trial_name: str = "ppo_quantum_knapsack"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
 
         # Environment parameters
-        env_id: str = "Pendulum-v1"  # Environment ID
+        env_id: str = "Knapsack-v1"  # Environment ID
+        num_items: int = 3
+        total_budget: int = 1.5
 
         # Algorithm parameters
-        total_timesteps: int = 1000000  # Total timesteps for the experiment
-        learning_rate: float = 3e-4  # Learning rate of the optimizer
+        total_timesteps: int = 100000  # Total timesteps for the experiment
         num_envs: int = 1  # Number of parallel environments
-        seed: int = None  # Seed for reproducibility
-        num_steps: int = 2048  # Steps per environment per policy rollout
+        num_steps: int = 512  # Steps per environment per policy rollout
         anneal_lr: bool = True  # Toggle for learning rate annealing
         lr_input_scaling: float = 0.01  # Learning rate for input scaling
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
-        gamma: float = 0.9  # Discount factor gamma
+        gamma: float = 0.99  # Discount factor gamma
         gae_lambda: float = 0.95  # Lambda for general advantage estimation
         num_minibatches: int = 32  # Number of mini-batches
         update_epochs: int = 10  # Number of epochs to update the policy
@@ -480,9 +584,9 @@ if __name__ == "__main__":
         target_kl: float = None  # Target KL divergence threshold
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 3  # Number of qubits
-        num_layers: int = 2  # Number of layers in the quantum circuit
-        device: str = "default.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
+        num_layers: int = 5  # Number of layers in the quantum circuit
+        device: str = "lightning.qubit"  # Quantum device
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
 
     config = vars(Config())
@@ -492,7 +596,7 @@ if __name__ == "__main__":
         datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
     )
     config["path"] = os.path.join(
-        Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
+        os.path.dirname(os.getcwd()), config["trial_path"], config["trial_name"]
     )
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated
@@ -501,4 +605,4 @@ if __name__ == "__main__":
     with open(config_path, "w") as file:
         yaml.dump(config, file)
 
-    ppo_quantum_continuous(config)
+    ppo_quantum_jumanji(config)

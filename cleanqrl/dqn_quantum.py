@@ -5,6 +5,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from collections import deque
 
 import gymnasium as gym
@@ -226,12 +227,12 @@ def dqn_quantum(config: dict):
                     metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
 
-            if global_episodes % 10 == 0 and not ray.is_initialized():
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
                     "Global step: ",
                     global_step,
                     " Mean return: ",
-                    np.mean(episode_returns[-10:]),
+                    np.mean(episode_returns),
                 )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
@@ -330,7 +331,7 @@ if __name__ == "__main__":
         datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
     )
     config["path"] = os.path.join(
-        os.path.dirname(os.getcwd()), config["trial_path"], config["trial_name"]
+        Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
     )
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated

@@ -4,12 +4,14 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from collections import deque
 
 import gymnasium as gym
 import numpy as np
 import ray
+import yaml
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -281,20 +283,21 @@ if __name__ == "__main__":
 
     @dataclass
     class Config:
-        trial_name: str = "dqn_classical"  # Name of the trial
+        # General parameters
+        trial_name: str = "ddpg_classical"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
 
         # Environment parameters
         env_id: str = "MountainCarContinuous-v0"  # Environment ID
 
-        num_envs: int = 1  # Number of environments
-        seed: int = None  # Seed for reproducibility
-        cuda: bool = True  # Cuda enabled
-
+        # Algorithm parameters
         total_timesteps: int = 100000  # Total number of timesteps
         buffer_size: int = int(1e6)  # Replay buffer size
         learning_rate: float = 3e-4  # Learning rate
+        num_envs: int = 1  # Number of environments
+        seed: int = None  # Seed for reproducibility
+        cuda: bool = True  # Cuda enabled
         gamma: float = 0.99  # Discount factor
         tau: float = 0.005  # Target network update rate
         batch_size: int = 256  # Batch size
@@ -302,3 +305,22 @@ if __name__ == "__main__":
         learning_starts: int = 25e3  # Timesteps before learning starts
         policy_frequency: int = 2  # Frequency of policy updates
         noise_clip: float = 0.5  # Noise clip
+
+    config = vars(Config())
+
+    # Based on the current time, create a unique name for the experiment
+    config["trial_name"] = (
+        datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
+    )
+    config["path"] = os.path.join(
+        Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
+    )
+
+    # Create the directory and save a copy of the config file so that the experiment can be replicated
+    os.makedirs(os.path.dirname(config["path"] + "/"), exist_ok=True)
+    config_path = os.path.join(config["path"], "config.yml")
+    with open(config_path, "w") as file:
+        yaml.dump(config, file)
+
+    # Start the agent training
+    ddpg_classical(config)

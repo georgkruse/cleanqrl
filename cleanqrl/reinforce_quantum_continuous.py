@@ -4,6 +4,8 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -186,12 +188,16 @@ def reinforce_quantum_continuous(config):
         ]
     )
 
+    # global parameters to log
     global_step = 0
+    global_episodes = 0
+    print_interval = 50
+    episode_returns = deque(maxlen=print_interval)
+    
+    # TRY NOT TO MODIFY: start the game  
     start_time = time.time()
     obs, _ = envs.reset()
     obs = torch.Tensor(obs).to(device)
-    global_episodes = 0
-    episode_returns = []
 
     while global_step < total_timesteps:
         log_probs = []
@@ -252,12 +258,12 @@ def reinforce_quantum_continuous(config):
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
                     log_metrics(config, metrics, report_path)
 
-            if global_episodes % 10 == 0 and not ray.is_initialized():
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
                     "Global step: ",
                     global_step,
                     " Mean return: ",
-                    np.mean(episode_returns[-1:]),
+                    np.mean(episode_returns),
                 )
 
     if config["save_model"]:
@@ -304,7 +310,7 @@ if __name__ == "__main__":
         datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
     )
     config["path"] = os.path.join(
-        os.path.dirname(os.getcwd()), config["trial_path"], config["trial_name"]
+        Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
     )
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated
