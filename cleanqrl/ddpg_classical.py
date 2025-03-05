@@ -4,6 +4,8 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from pathlib import Path
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -15,13 +17,13 @@ import torch.optim as optim
 import wandb
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
-from torch.utils.tensorboard import SummaryWriter
-
+from wrapper import ReplayBufferWrapper
 
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = ReplayBufferWrapper(env)
         return env
 
     return thunk
@@ -163,9 +165,12 @@ def ddpg_classical(config: dict):
     )
     start_time = time.time()
 
-    # TRY NOT TO MODIFY: start the game
+    # global parameters to log
+    print_interval = 50
     global_episodes = 0
-    episode_returns = []
+    episode_returns = deque(maxlen=print_interval)
+
+    # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=seed)
     for global_step in range(total_timesteps):
         # ALGO LOGIC: put action logic here
@@ -197,19 +202,19 @@ def ddpg_classical(config: dict):
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
-            if global_episodes % 10 == 0 and not ray.is_initialized():
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
                     "Global step: ",
                     global_step,
                     " Mean return: ",
-                    np.mean(episode_returns[-1:]),
+                    np.mean(episode_returns),
                 )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
-        # for idx, trunc in enumerate(truncations):
-        #    if trunc:
-        #        real_next_obs[idx] = infos["final_observation"][idx]
+        for idx, trunc in enumerate(truncations):
+           if trunc:
+               real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook

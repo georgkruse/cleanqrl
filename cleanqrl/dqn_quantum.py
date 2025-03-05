@@ -5,6 +5,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -18,6 +19,7 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
+from wrapper import ReplayBufferWrapper
 
 
 def make_env(env_id, config):
@@ -190,8 +192,10 @@ def dqn_quantum(config: dict):
     start_time = time.time()
 
     # global parameters to log
+    print_interval = 50
     global_episodes = 0
-    episode_returns = []
+    episode_returns = deque(maxlen=print_interval)
+
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=seed)
     for global_step in range(total_timesteps):
@@ -227,15 +231,14 @@ def dqn_quantum(config: dict):
                     "Global step: ",
                     global_step,
                     " Mean return: ",
-                    np.mean(episode_returns[-1:]),
+                    np.mean(episode_returns[-10:]),
                 )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
-        # TODO: Check if this is actually important: see issue #10
-        # for idx, trunc in enumerate(truncations):
-        #     if trunc:
-        #         real_next_obs[idx] = infos["final_observation"][idx]
+        for idx, trunc in enumerate(truncations):
+            if trunc:
+                real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
