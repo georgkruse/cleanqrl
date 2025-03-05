@@ -1,0 +1,170 @@
+type:                             QRL                   # choose a type: RL, GA, Hypernetwork (DEPRECATED)
+alg:                              QBM                  # name of the algorithm
+seed:                             42                    # seed for ray alogorithms/tensorflow/pytorch for reproduceabel results
+constant_seed:                    False                 # setting the same seed accross all runs
+checkpoint_at_end:                False                  # create checkpoint at the end of training
+checkpoint_freq:                  5000                  # set checkpoint frequency, depends on training iterations
+ray_local_mode:                   False                 # set local_mode of ray to True for debugging
+ray_logging_path:                 logs/paper/replicas/3x3/qbm         # logging directory
+total_num_cpus:                   20                    # total number of cpus
+total_num_gpus:                   0                     # total number of gpus
+ray_num_trial_samples:            10                     # number of training seeds per combination
+training_iterations:              50                    # number of training iterations
+run_sections:                                           # specify the sections ['qrl_training' and 'plotting']
+                                - qrl_training
+                                - plotting
+
+############################## Env Config #############################################
+env:                              Maze                    # specifiy env string              
+env_config:
+  game_mode:                      basic #frozen_lake # frozen_lake
+  state_encoding:                 onehot # onehot
+  #### Parameters for frozen_lake version ####
+  map_name:                       4x4
+  is_slippery:                    False
+  #### Parameters for basic version ####
+  legal_actions_type:             restricted # all
+  env_type:                       mueller_3x3 # mueller_3x3 #crawford #'mueller_3x3'
+  # - grid_search
+  # - string
+  # - [mueller_3x3, crawford] #, neumann_a, neumann_b]
+  P:    -1
+  A:    10
+  W:    -1
+  R:    100
+  n:    3
+  default_reward: -10
+
+
+############################## Alg Config #############################################
+algorithm_config:                                       # config for QRL training
+  steps_per_epoch: 200
+  target_network_update_freq: 10
+  exploration_config:
+    epsilon_timesteps: 5000
+    final_epsilon: 0.05
+    initial_epsilon: 1.00
+    type: CustomEpsilonGreedy
+
+  replay_buffer_config:
+    capacity: 100
+    replay_sequence_length: 1
+    type: MultiAgentReplayBuffer
+  
+  num_steps_sampled_before_learning_starts: 1
+  gamma: 0.95
+  dueling: False
+  double_q : False
+  tau : 0.9
+  td_error_loss_fn: mse
+  grad_clip: None
+  action_masking: True
+  train_batch_size: 10
+  
+  _disable_preprocessor_api:      True
+  ###########################################################################
+  reuse_actors:                   True
+  framework:                      torch                 # ray framework [torch, tensorflow]
+ 
+  mean: 0.0
+  variance: 0.01
+  action_size: 5
+  state_size: 15
+
+  layers:    [4,4]    
+    # - grid_search
+    # - list(int)
+    # - [[4,4], [8,8]]
+  hamiltonian_type:  H_(d+1)_rep_2
+    # - grid_search
+    # - string
+    # - [H, H_(d+1)_rep_2, H_(d+1)_rep_5, H_(d+1)_rep_10]
+  sampler_type:      dwave-sim
+  
+  lr: 0.000005
+    # - grid_search
+    # - float
+    # - [5e-3, 1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+
+  learning_rate_schedule:  [0.001, 1e-7, 5000]
+    # - grid_search
+    # - list(float)
+    # - [
+    #   [0.001, 1e-5, 5000],
+    #   [0.0005, 1e-5, 5000],
+    #   [0.0001, 1e-5, 5000]
+    #   ]
+  beta:         2.0
+    # - grid_search
+    # - float
+    # - [1.0, 2.0, 3.0, 4.0, 5.0]
+  big_gamma:    0.5067013
+    # - grid_search
+    # - float
+    # - [0.2, 0.5, 1.0, 2.0, 5.0]
+  small_gamma: 0.95
+    # - grid_search
+    # - float
+    # - [0.95, 0.99]
+
+  # sampler_type:     dwave-qpu-SA #openjij-sqa-SA          #   openjij-sa-SA # dwave-qpu-SQA', 'dwave-sim-SQA', 'openjij-sa-SQA', 'openjij-sqa-SQA', 'openjij-csqa-SQA'simulator # dwave_embedding, dwave_fixed_embedding, simulator
+  #   # - grid_search
+  #   # - string
+  #   # - ['dwave-sim-SQA',  'openjij-sa-SQA', 'dwave-sim-SA', 'openjij-sa-SA']
+
+
+  dwave_sim:
+    beta_range:            [0.01, 2.0] # [2.0, 8.699514748210191]
+    beta_schedule_type:    geometric
+    num_sweeps:            100
+    # num_sweeps_per_beta:            1
+
+  fixed_embedding:                  False
+  use_gauge: False
+  embedding_path:                   None      
+  # anneal_schedule:    
+  #   - [0.0, 0.0]
+  #   - [20.0, 1.0]
+  num_reads:                        100          # default is None
+  anneal_schedule: default
+    # - anneal_time_list:  [10, 20, 50, 100]
+    # - s_pause_list: [0.3, 0.4, 0.5]
+    # - anneal_schedule_type_list: ['mid_anneal_pause', 'mid_anneal_quench']
+  answer_mode: raw
+  programming_thermalization:       0.0
+  readout_thermalization:           0.0
+  auto_scale:                       False          # default is True
+  reduce_intersample_correlation:   False
+  calculate_chain_strength:         True
+  prefactor_chain_strength:         2.0
+  return_embedding:                 False
+  embedding_path:                   embeddings     
+  embedding:
+    max_no_improvement:             10
+    random_seed:                    42
+
+  simulator_config:
+    beta_range:                     [0.01, 2.0] # [2.0, 8.699514748210191]
+    beta_schedule_type:             geometric
+    #seed:                           42
+    num_reads:                      100
+    num_sweeps:                     1
+    # num_sweeps_per_beta:            1
+
+    # ###########################################################################
+    # lr:                             0.001                 # select lr for nn, variational params and input scaling params
+    # lr_output_scaling:              0.01                   # select lr for output scaling params
+    # num_layers:                     5                     # select number of layers of vqc (layer nn defined below)
+
+
+
+############################## Eval Config #############################################
+evaluation:
+  set_seed:               True 
+  seed:                   42
+  ###########################################################################
+  plotting:
+    mode:                         auto 
+    y_axis:                       episode_reward_mean 
+    path:                         /home/users/kruse/quantum-computing/qrl/logs/qbm/2024-11-18--10-56-06_QRL_QBM
+  

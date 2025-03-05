@@ -1,4 +1,0 @@
-cluster/
-logs/
-**/tests/
-**/__pycache__/

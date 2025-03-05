@@ -1,9 +1,0 @@
-1) Gymnasium downgraded for 0.28.0 -> for cleanRL compatibility
-
-2) Removed qml.broadcast from hea which has been deprecated in Pennylane v0.39
-
-3) Updated agents to deal with new gymnasium version
-
-4) Updated ppo_classical,dqn_classical,ppo_quantum,dqn_quantum to store metrics in json if ray.init not initialized
-
-5) Updated ppo_quantum agent: removed dynamic_measurement flag, for now uses just hea
