@@ -53,7 +53,7 @@ class ReinforceAgentQuantum(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.num_features = np.array(envs.single_observation_space.shape).prod()
+        self.observation_size = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
 
@@ -252,10 +252,10 @@ def reinforce_quantum(config):
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
                     log_metrics(config, metrics, report_path)
 
-        if global_episodes % print_interval == 0 and not ray.is_initialized():
-            print(
-                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
-            )
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                print(
+                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                )
 
     if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
@@ -278,7 +278,7 @@ if __name__ == "__main__":
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "FrozenLake-v1"  # Environment ID
+        env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments

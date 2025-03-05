@@ -21,13 +21,12 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
-from wrapper import ReplayBufferWrapper
+from wrapper import ReplayBufferWrapper, create_jumanji_env
 
 
-def make_env(env_id):
+def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = create_jumanji_env(env_id, config)
         env = ReplayBufferWrapper(env)
 
         return env
@@ -35,16 +34,30 @@ def make_env(env_id):
     return thunk
 
 
-def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
+def hardware_efficient_ansatz(
+    x, input_scaling, weights, wires, layers, num_actions, agent_type
+):
+
+    # This block needs to be adapted depending on the environment.
+    # The input vector is of shape [4*num_actions] for the Knapsack:
+    # action mask, selected items, values, weights
+    # There is probably no way of one ansatz for all jumnanji envs.
+    annotations = x[:, num_actions : num_actions * 2]
+    values_kp = x[:, num_actions * 2 : num_actions * 3]
+    weights_kp = x[:, -num_actions:]
+
     for layer in range(layers):
         for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+            qml.RY(input_scaling[layer, i] * values_kp[:, i], wires=[wire])
 
         for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires=[wire])
+            qml.RZ(input_scaling[layer, i] * weights_kp[:, i], wires=[wire])
 
         for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
+            qml.RX(annotations[:, i], wires=[wire])
+
+        for i, wire in enumerate(wires):
+            qml.RZ(weights[layer, i], wires=[wire])
 
         if len(wires) == 2:
             qml.CZ(wires=wires)
@@ -52,20 +65,17 @@ def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_acti
             for i in range(len(wires)):
                 qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
 
-    return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+    if agent_type == "actor":
+        return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+    elif agent_type == "critic":
+        return [qml.expval(qml.PauliX(0))]
 
 
 class DQNAgentQuantum(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.state_encoding = config["state_encoding"]
-
-        if self.state_encoding == "onehot":
-            self.observation_size = envs.single_observation_space.n
-        elif self.state_encoding == "binary":
-            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
-
+        self.observation_size = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
 
@@ -101,9 +111,8 @@ class DQNAgentQuantum(nn.Module):
         )
 
     def forward(self, x):
-        x_encoded = self.encode_input(x)
         logits = self.quantum_circuit(
-            x_encoded,
+            x,
             self.input_scaling,
             self.weights,
             self.wires,
@@ -113,20 +122,6 @@ class DQNAgentQuantum(nn.Module):
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
         return logits
-
-    def encode_input(self, x):
-        if self.state_encoding == "onehot":
-            x_onehot = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                x_onehot[i, int(val.item())] = np.pi
-            return x_onehot
-        elif self.state_encoding == "binary":
-            x_binary = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                binary = bin(int(val.item()))[2:]
-                padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
-            return x_binary
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -145,7 +140,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def dqn_quantum_discrete_state(config: dict):
+def dqn_quantum_jumanji(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -187,6 +182,7 @@ def dqn_quantum_discrete_state(config: dict):
             save_code=True,
             dir=report_path,
         )
+        
     # TRY NOT TO MODIFY: seeding
     if config["seed"] is None:
         seed = np.random.randint(0, 1e9)
@@ -197,12 +193,9 @@ def dqn_quantum_discrete_state(config: dict):
     np.random.seed(seed)
     torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
-    assert (
-        env_id in gym.envs.registry.keys()
-    ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
@@ -231,6 +224,7 @@ def dqn_quantum_discrete_state(config: dict):
     print_interval = 50
     global_episodes = 0
     episode_returns = deque(maxlen=print_interval)
+    episode_approximation_ratio = deque(maxlen=print_interval)
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=seed)
@@ -260,12 +254,19 @@ def dqn_quantum_discrete_state(config: dict):
                     metrics["episode_reward"] = infos["episode"]["r"].tolist()[idx]
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
+                    if "approximation_ratio" in infos.keys():
+                        metrics["approximation_ratio"] = infos["approximation_ratio"][idx]
+                        episode_approximation_ratio.append(
+                            metrics["approximation_ratio"]
+                        )
                     log_metrics(config, metrics, report_path)
 
             if global_episodes % print_interval == 0 and not ray.is_initialized():
-                print(
-                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
-                )
+                logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
+                if len(episode_approximation_ratio) > 0:
+                    logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
+                print(logging_info)
+
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
@@ -325,13 +326,14 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "dqn_quantum_discrete_state"  # Name of the trial
+        trial_name: str = "dqn_quantum_jumanji"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "FrozenLake-v1"  # Environment ID
+        env_id: str = "TSP-v1"  # Environment ID
+        num_cities: int = 4
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
@@ -356,9 +358,6 @@ if __name__ == "__main__":
         device: str = "default.qubit"  # Quantum device
         diff_method: str = "backprop"  # Differentiation method
         save_model: bool = True  # Save the model after the run
-        state_encoding: str = (
-            "binary"  # Type of state encoding, either "binary" or "onehot"
-        )
 
     config = vars(Config())
 
@@ -377,4 +376,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    dqn_quantum_discrete_state(config)
+    dqn_quantum_jumanji(config)

@@ -22,11 +22,12 @@ from replay_buffer import ReplayBuffer
 from wrapper import ReplayBufferWrapper
 
 
-def make_env(env_id, config):
+def make_env(env_id):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
+        
         return env
 
     return thunk
@@ -148,7 +149,7 @@ def dqn_classical_discrete_state(config: dict):
     ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv([make_env(env_id) for i in range(num_envs)])
 
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
@@ -206,10 +207,10 @@ def dqn_classical_discrete_state(config: dict):
                     metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
         
-        if global_episodes % print_interval == 0 and not ray.is_initialized():
-            print(
-                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
-            )
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                print(
+                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()

@@ -19,7 +19,7 @@ from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
 
-def make_env(env_id, config=None):
+def make_env(env_id):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -186,10 +186,10 @@ def reinforce_classical(config):
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
                     log_metrics(config, metrics, report_path)
 
-        if global_episodes % print_interval == 0 and not ray.is_initialized():
-            print(
-                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
-            )
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                print(
+                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                )
 
     if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"

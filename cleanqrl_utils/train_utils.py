@@ -6,10 +6,15 @@ repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(repo_path)
 sys.path.append(os.path.join(repo_path, "cleanqrl"))
 
+# DQN classical
 from cleanqrl.dqn_classical import dqn_classical
+from cleanqrl.dqn_classical_discrete_state import dqn_classical_discrete_state
+from cleanqrl.dqn_classical_jumanji import dqn_classical_jumanji
 
-# from cleanqrl.dqn_classical_jumanji import dqn_classical_jumanji
+# DQN quantum
 from cleanqrl.dqn_quantum import dqn_quantum
+from cleanqrl.dqn_quantum_discrete_state import dqn_quantum_discrete_state
+from cleanqrl.dqn_quantum_jumanji import dqn_quantum_jumanji
 
 # PPO classical
 from cleanqrl.ppo_classical import ppo_classical
@@ -31,40 +36,50 @@ from cleanqrl.reinforce_classical_continuous_action import (
 from cleanqrl.reinforce_classical_discrete_state import (
     reinforce_classical_discrete_state,
 )
+from cleanqrl.reinforce_classical_jumanji import reinforce_classical_jumanji
 
-# from cleanqrl.reinforce_classical_jumanji import reinforce_classical_jumanji
 # REINFORCE quantum
 from cleanqrl.reinforce_quantum import reinforce_quantum
 from cleanqrl.reinforce_quantum_continuous_action import (
     reinforce_quantum_continuous_action,
 )
 from cleanqrl.reinforce_quantum_discrete_state import reinforce_quantum_discrete_state
-
-# from cleanqrl.dqn_quantum_jumanji import dqn_quantum_jumanji
-
-
-# from cleanqrl.reinforce_quantum_jumanji import reinforce_quantum_jumanji
+from cleanqrl.reinforce_quantum_jumanji import reinforce_quantum_jumanji
 
 
 agent_switch = {
     "ppo_classical": ppo_classical,
-    "ppo_classical_continuous": ppo_classical_continuous,
+    "ppo_classical_continuous_action": ppo_classical_continuous_action,
+    "ppo_classical_discrete_state": ppo_classical_discrete_state,
     "ppo_classical_jumanji": ppo_classical_jumanji,
     "ppo_quantum": ppo_quantum,
-    "ppo_quantum_continuous": ppo_quantum_continuous,
+    "ppo_quantum_continuous_action": ppo_quantum_continuous_action,
+    "ppo_quantum_discrete_state": ppo_quantum_discrete_state,
     "ppo_quantum_jumanji": ppo_quantum_jumanji,
     "dqn_classical": dqn_classical,
-    # "dqn_classical_jumanji": dqn_classical_jumanji,
+    "dqn_classical_discrete_state": dqn_classical_discrete_state,
+    "dqn_classical_jumanji": dqn_classical_jumanji,
     "dqn_quantum": dqn_quantum,
-    # 'dqn_quantum_hamiltonian': dqn_quantum_jumanji,
+    "dqn_quantum_discrete_state": dqn_quantum_discrete_state,
+    'dqn_quantum_jumanji': dqn_quantum_jumanji,
     "reinforce_classical": reinforce_classical,
-    "reinforce_classical_continuous": reinforce_classical_continuous,
-    # "reinforce_classical_jumanji": reinforce_classical_jumanji,
+    "reinforce_classical_continuous_action": reinforce_classical_continuous_action,
+    "reinforce_classical_discrete_state": reinforce_classical_discrete_state,
+    "reinforce_classical_jumanji": reinforce_classical_jumanji,
     "reinforce_quantum": reinforce_quantum,
-    "reinforce_quantum_continuous": reinforce_quantum_continuous,
-    # "reinforce_quantum_jumanji": reinforce_quantum_jumanji,
+    "reinforce_quantum_continuous_action": reinforce_quantum_continuous_action,
+    "reinforce_quantum_discrete_state": reinforce_quantum_discrete_state,
+    "reinforce_quantum_jumanji": reinforce_quantum_jumanji,
 }
 
 
 def train_agent(config):
-    agent_switch[config["agent"].lower()](config)
+    try:
+        agent_type = config["agent"].lower()
+        if agent_type not in agent_switch:
+            raise KeyError(f"Agent type '{agent_type}' not found in agent_switch dictionary")
+        agent_switch[agent_type](config)
+    except KeyError as e:
+        raise e  
+
+        

@@ -314,13 +314,13 @@ def ppo_quantum(config):
                         metrics["global_step"] = global_step
                         log_metrics(config, metrics, report_path)
 
-            if global_episodes % print_interval == 0 and not ray.is_initialized():
-                print(
-                    "Global step: ",
-                    global_step,
-                    " Mean return: ",
-                    np.mean(episode_returns),
-                )
+                if global_episodes % print_interval == 0 and not ray.is_initialized():
+                    print(
+                        "Global step: ",
+                        global_step,
+                        " Mean return: ",
+                        np.mean(episode_returns),
+                    )
 
         # bootstrap value if not done
         with torch.no_grad():

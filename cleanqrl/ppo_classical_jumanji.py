@@ -217,11 +217,11 @@ def ppo_classical_jumanji(config):
                             )
                         log_metrics(config, metrics, report_path)
 
-            if global_episodes % print_interval == 0 and not ray.is_initialized():
-                logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
-                if "approximation_ratio" in infos.keys():
-                    logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
-                print(logging_info)
+                if global_episodes % print_interval == 0 and not ray.is_initialized():
+                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
+                    if len(episode_approximation_ratio) > 0:
+                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
+                    print(logging_info)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -345,7 +345,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ppo_classical_jumanji"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

@@ -276,10 +276,10 @@ def reinforce_quantum_discrete_state(config):
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
                     log_metrics(config, metrics, report_path)
 
-        if global_episodes % print_interval == 0 and not ray.is_initialized():
-            print(
-                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
-            )
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                print(
+                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                )
 
     if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
