@@ -1,0 +1,5 @@
+1) Classical DQN not working with cuda=True -> Probably due to replay buffer implementation
+
+2) Plot_single_run not working for classical PPO
+
+4) qml.lightning not working even on ki-02
