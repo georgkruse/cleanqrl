@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             ppo_jumanji_knapsack_classical
+trial_name:             ppo_cartpole_classical
 wandb:                  True
 
 # ray tune parameters
@@ -12,26 +12,17 @@ cpus_per_worker:        3
 gpus_per_worker:        0
 
 # environment parameters
-#env_id:              Maze-v0
-#num_cols:            4
-#num_rows:            4
-# constant_maze:       True
-env_id:              Knapsack-v1
-num_items:          4
-total_budget:       2
-
-# env_id:              TSP-v1
-# num_cities:          4
+env_id:   CartPole-v1
 
 # algorithm parameters
-agent:               PPO_classical_jumanji
+agent:               PPO_classical
 total_timesteps:    200000
-learning_rate:      0.0001
-num_envs:           1
+learning_rate:      0.001
+num_envs:           2
 seed:               None
 num_steps:          128
-anneal_lr:          False
-gamma:              0.95
+anneal_lr:          True
+gamma:              0.99
 gae_lambda:         0.95
 num_minibatches:    4
 update_epochs:      4
@@ -44,5 +35,6 @@ max_grad_norm:      0.5
 target_kl:          None
 cuda: False
 save_model: True
+wandb: True
 
 
