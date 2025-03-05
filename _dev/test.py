@@ -1,13 +1,12 @@
-
 # from jumanji.environments.routing.tsp.generator import Generator, UniformGenerator
 # # import jax
 # generator_tsp = UniformGenerator(num_cities=5)
 # # generator_knapsack = RandomGenerator(total_budget=2, num_items=2)
-# import gymnasium as gym 
+# import gymnasium as gym
 # import jumanji.wrappers
 # from jumanji.environments import Knapsack, TSP
 # from jumanji.environments.packing.knapsack.generator import RandomGenerator
-# import numpy as np 
+# import numpy as np
 # import itertools
 
 
@@ -15,7 +14,7 @@
 
 #     optimal_tour_length = 1000
 #     for tour_permutation  in itertools.permutations(range(1,nodes.shape[0])):
-#         tour = [0] + tour_permutation 
+#         tour = [0] + tour_permutation
 #         tour_length = compute_tour_length(nodes, tour)
 #         if tour_length < optimal_tour_length:
 #             optimal_tour_length = tour_length
@@ -110,10 +109,9 @@
 
 import jax
 import jumanji.wrappers
-from jumanji.environments import Knapsack 
+from jumanji.environments import Knapsack
 from jumanji.environments.packing.knapsack.generator import RandomGenerator
 
-    
 key = jax.random.PRNGKey(0)
 generator_knapsack = RandomGenerator(total_budget=10, num_items=5)
 env = Knapsack(generator=generator_knapsack)
@@ -126,4 +124,4 @@ for i in range(5):
     # state, reward, terminate, truncate, info = env.step(i)
     # print(reward, terminate, truncate, info)
 
-print('done')
+print("done")

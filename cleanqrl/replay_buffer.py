@@ -16,6 +16,7 @@ class ReplayBufferSamples:
         self.dones = dones
         self.rewards = rewards
 
+
 class BaseBuffer(ABC):
     """
     Base class that represent a buffer (rollout or replay)
@@ -43,12 +44,14 @@ class BaseBuffer(ABC):
         self.buffer_size = buffer_size
         self.observation_space = observation_space
         self.action_space = action_space
-        self.obs_shape = observation_space.shape # get_obs_shape(observation_space)  # type: ignore[assignment]
+        self.obs_shape = (
+            observation_space.shape
+        )  # get_obs_shape(observation_space)  # type: ignore[assignment]
 
-        self.action_dim = 1 # action_space.n #get_action_dim(action_space)
+        self.action_dim = 1  # action_space.n #get_action_dim(action_space)
         self.pos = 0
         self.full = False
-        self.device = "cpu" #get_device(device)
+        self.device = "cpu"  # get_device(device)
         self.n_envs = n_envs
 
     @staticmethod
@@ -95,7 +98,7 @@ class BaseBuffer(ABC):
         self.pos = 0
         self.full = False
 
-    def sample(self, batch_size: int, env = None):
+    def sample(self, batch_size: int, env=None):
         """
         :param batch_size: Number of element to sample
         :param env: associated gym VecEnv
@@ -107,9 +110,7 @@ class BaseBuffer(ABC):
         return self._get_samples(batch_inds, env=env)
 
     @abstractmethod
-    def _get_samples(
-        self, batch_inds: np.ndarray, env = None
-    ):
+    def _get_samples(self, batch_inds: np.ndarray, env=None):
         """
         :param batch_inds:
         :param env:
@@ -134,14 +135,14 @@ class BaseBuffer(ABC):
     @staticmethod
     def _normalize_obs(
         obs: Union[np.ndarray, dict[str, np.ndarray]],
-        env = None,
+        env=None,
     ) -> Union[np.ndarray, dict[str, np.ndarray]]:
         if env is not None:
             return env.normalize_obs(obs)
         return obs
 
     @staticmethod
-    def _normalize_reward(reward: np.ndarray, env = None) -> np.ndarray:
+    def _normalize_reward(reward: np.ndarray, env=None) -> np.ndarray:
         if env is not None:
             return env.normalize_reward(reward).astype(np.float32)
         return reward
@@ -184,11 +185,12 @@ class ReplayBuffer(BaseBuffer):
         optimize_memory_usage: bool = False,
         handle_timeout_termination: bool = True,
     ):
-        super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
+        super().__init__(
+            buffer_size, observation_space, action_space, device, n_envs=n_envs
+        )
 
         # Adjust buffer size
         self.buffer_size = max(buffer_size // n_envs, 1)
-
 
         # there is a bug if both optimize_memory_usage and handle_timeout_termination are true
         # see https://github.com/DLR-RM/stable-baselines3/issues/934
@@ -199,16 +201,23 @@ class ReplayBuffer(BaseBuffer):
             )
         self.optimize_memory_usage = optimize_memory_usage
 
-        self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        self.observations = np.zeros(
+            (self.buffer_size, self.n_envs, *self.obs_shape),
+            dtype=observation_space.dtype,
+        )
         # self.observations = [[] for _ in range(self.buffer_size)] #, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
 
         # if not optimize_memory_usage:
         #     # When optimizing memory, `observations` contains also the next observation
-        self.next_observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
+        self.next_observations = np.zeros(
+            (self.buffer_size, self.n_envs, *self.obs_shape),
+            dtype=observation_space.dtype,
+        )
         # self.next_observations = [[] for _ in range(self.buffer_size)]
 
         self.actions = np.zeros(
-            (self.buffer_size, self.n_envs, self.action_dim), dtype=self._maybe_cast_dtype(action_space.dtype)
+            (self.buffer_size, self.n_envs, self.action_dim),
+            dtype=self._maybe_cast_dtype(action_space.dtype),
         )
 
         self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
@@ -217,7 +226,6 @@ class ReplayBuffer(BaseBuffer):
         # see https://github.com/DLR-RM/stable-baselines3/issues/284
         self.handle_timeout_termination = handle_timeout_termination
         self.timeouts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-
 
     def add(
         self,
@@ -250,14 +258,16 @@ class ReplayBuffer(BaseBuffer):
         self.dones[self.pos] = np.array(done)
 
         if self.handle_timeout_termination:
-            self.timeouts[self.pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
+            self.timeouts[self.pos] = np.array(
+                [info.get("TimeLimit.truncated", False) for info in infos]
+            )
 
         self.pos += 1
         if self.pos == self.buffer_size:
             self.full = True
             self.pos = 0
 
-    def sample(self, batch_size: int, env = None):
+    def sample(self, batch_size: int, env=None):
         """
         Sample elements from the replay buffer.
         Custom sampling when using memory efficient variant,
@@ -274,19 +284,26 @@ class ReplayBuffer(BaseBuffer):
         # Do not sample the element with index `self.pos` as the transitions is invalid
         # (we use only one array to store `obs` and `next_obs`)
         if self.full:
-            batch_inds = (np.random.randint(1, self.buffer_size, size=batch_size) + self.pos) % self.buffer_size
+            batch_inds = (
+                np.random.randint(1, self.buffer_size, size=batch_size) + self.pos
+            ) % self.buffer_size
         else:
             batch_inds = np.random.randint(0, self.pos, size=batch_size)
         return self._get_samples(batch_inds, env=env)
 
-    def _get_samples(self, batch_inds: np.ndarray, env = None):
+    def _get_samples(self, batch_inds: np.ndarray, env=None):
         # Sample randomly the env idx
         env_indices = np.random.randint(0, high=self.n_envs, size=(len(batch_inds),))
 
         if self.optimize_memory_usage:
-            next_obs = self._normalize_obs(self.observations[(batch_inds + 1) % self.buffer_size, env_indices, :], env)
+            next_obs = self._normalize_obs(
+                self.observations[(batch_inds + 1) % self.buffer_size, env_indices, :],
+                env,
+            )
         else:
-            next_obs = self._normalize_obs(self.next_observations[batch_inds, env_indices, :], env)
+            next_obs = self._normalize_obs(
+                self.next_observations[batch_inds, env_indices, :], env
+            )
 
         data = (
             self._normalize_obs(self.observations[batch_inds, env_indices, :], env),
@@ -294,8 +311,13 @@ class ReplayBuffer(BaseBuffer):
             next_obs,
             # Only use dones that are not due to timeouts
             # deactivated by default (timeouts is initialized as an array of False)
-            (self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1),
-            self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, 1), env),
+            (
+                self.dones[batch_inds, env_indices]
+                * (1 - self.timeouts[batch_inds, env_indices])
+            ).reshape(-1, 1),
+            self._normalize_reward(
+                self.rewards[batch_inds, env_indices].reshape(-1, 1), env
+            ),
         )
         return ReplayBufferSamples(*tuple(map(self.to_torch, data)))
 
@@ -313,4 +335,3 @@ class ReplayBuffer(BaseBuffer):
         if dtype == np.float64:
             return np.float32
         return dtype
-
