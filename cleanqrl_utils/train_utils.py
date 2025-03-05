@@ -10,20 +10,38 @@ from cleanqrl.dqn_classical import dqn_classical
 
 # from cleanqrl.dqn_classical_jumanji import dqn_classical_jumanji
 from cleanqrl.dqn_quantum import dqn_quantum
+
+# PPO classical
 from cleanqrl.ppo_classical import ppo_classical
-from cleanqrl.ppo_classical_continuous import ppo_classical_continuous
+from cleanqrl.ppo_classical_continuous_action import ppo_classical_continuous_action
+from cleanqrl.ppo_classical_discrete_state import ppo_classical_discrete_state
 from cleanqrl.ppo_classical_jumanji import ppo_classical_jumanji
+
+# PPO quantum
 from cleanqrl.ppo_quantum import ppo_quantum
-from cleanqrl.ppo_quantum_continuous import ppo_quantum_continuous
+from cleanqrl.ppo_quantum_continuous_action import ppo_quantum_continuous_action
+from cleanqrl.ppo_quantum_discrete_state import ppo_quantum_discrete_state
 from cleanqrl.ppo_quantum_jumanji import ppo_quantum_jumanji
 
-# from cleanqrl.dqn_quantum_jumanji import dqn_quantum_jumanji
+# REINFORCE classical
 from cleanqrl.reinforce_classical import reinforce_classical
-from cleanqrl.reinforce_classical_continuous import reinforce_classical_continuous
+from cleanqrl.reinforce_classical_continuous_action import (
+    reinforce_classical_continuous_action,
+)
+from cleanqrl.reinforce_classical_discrete_state import (
+    reinforce_classical_discrete_state,
+)
 
 # from cleanqrl.reinforce_classical_jumanji import reinforce_classical_jumanji
+# REINFORCE quantum
 from cleanqrl.reinforce_quantum import reinforce_quantum
-from cleanqrl.reinforce_quantum_continuous import reinforce_quantum_continuous
+from cleanqrl.reinforce_quantum_continuous_action import (
+    reinforce_quantum_continuous_action,
+)
+from cleanqrl.reinforce_quantum_discrete_state import reinforce_quantum_discrete_state
+
+# from cleanqrl.dqn_quantum_jumanji import dqn_quantum_jumanji
+
 
 # from cleanqrl.reinforce_quantum_jumanji import reinforce_quantum_jumanji
 

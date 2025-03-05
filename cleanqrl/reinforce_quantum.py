@@ -2,10 +2,10 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -58,8 +58,8 @@ class ReinforceAgentQuantum(nn.Module):
         self.num_qubits = config["num_qubits"]
 
         assert (
-            self.num_qubits >= self.num_features
-        ), "Number of qubits must be greater than or equal to the number of features"
+            self.num_qubits >= self.observation_size
+        ), "Number of qubits must be greater than or equal to the observation size"
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
@@ -139,7 +139,7 @@ def reinforce_quantum(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -187,8 +187,8 @@ def reinforce_quantum(config):
     global_episodes = 0
     print_interval = 50
     episode_returns = deque(maxlen=print_interval)
-    
-    # TRY NOT TO MODIFY: start the game  
+
+    # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     obs, _ = envs.reset()
     obs = torch.Tensor(obs).to(device)
@@ -222,7 +222,7 @@ def reinforce_quantum(config):
             discounted_rewards.insert(0, cumulative_reward)
 
         # Normalize rewards
-        discounted_rewards = torch.tensor(discounted_rewards).to(device)
+        discounted_rewards = torch.tensor(np.array(discounted_rewards)).to(device)
         discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (
             discounted_rewards.std() + 1e-9
         )
@@ -250,16 +250,12 @@ def reinforce_quantum(config):
                     metrics["global_step"] = global_step
                     metrics["policy_loss"] = loss.item()
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
-                    print("SPS", metrics["SPS"])
                     log_metrics(config, metrics, report_path)
 
-            if global_episodes % print_interval == 0 and not ray.is_initialized():
-                print(
-                    "Global step: ",
-                    global_step,
-                    " Mean return: ",
-                    np.mean(episode_returns),
-                )
+        if global_episodes % print_interval == 0 and not ray.is_initialized():
+            print(
+                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+            )
 
     if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
@@ -279,6 +275,7 @@ if __name__ == "__main__":
         trial_name: str = "reinforce_quantum"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID

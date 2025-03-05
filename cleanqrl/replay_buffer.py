@@ -301,12 +301,23 @@ class ReplayBuffer(BaseBuffer):
                 env,
             )
         else:
-            next_obs = self._normalize_obs(
-                self.next_observations[batch_inds, env_indices, :], env
+            if len(self.next_observations.shape) == 2:
+                next_obs = self._normalize_obs(
+                    self.next_observations[batch_inds, env_indices], env
+                )
+            else:
+                next_obs = self._normalize_obs(
+                    self.next_observations[batch_inds, env_indices, :], env
+                )
+        if len(self.next_observations.shape) == 2:
+            obs = self._normalize_obs(self.observations[batch_inds, env_indices], env)
+        else:
+            obs = self._normalize_obs(
+                self.observations[batch_inds, env_indices, :], env
             )
 
         data = (
-            self._normalize_obs(self.observations[batch_inds, env_indices, :], env),
+            obs,
             self.actions[batch_inds, env_indices, :],
             next_obs,
             # Only use dones that are not due to timeouts

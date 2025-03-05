@@ -3,10 +3,10 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -17,69 +17,69 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from torch.distributions.normal import Normal
+from torch.distributions.categorical import Categorical
 
 
 def make_env(env_id, config):
     def thunk():
-
         env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(
-            env
-        )  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+
         return env
 
     return thunk
 
 
-class PPOAgentClassicalContinuous(nn.Module):
-    def __init__(self, envs):
+class PPOAgentClassical(nn.Module):
+    def __init__(self, envs, state_encoding):
         super().__init__()
+        self.state_encoding = state_encoding
+
+        if self.state_encoding == "onehot":
+            self.observation_size = envs.single_observation_space.n
+        elif self.state_encoding == "binary":
+            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+
         self.critic = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(self.observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
         )
-        self.actor_mean = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+        self.actor = nn.Sequential(
+            nn.Linear(self.observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, np.prod(envs.single_action_space.shape)),
+            nn.Linear(64, envs.single_action_space.n),
         )
-        # self.actor_mean = nn.Linear(64, np.prod(envs.single_action_space.shape))
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, np.prod(envs.single_action_space.shape))
-        )
-        # self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
 
     def get_value(self, x):
-        return self.critic(x)
+        x_encoded = self.encode_input(x)
+        return self.critic(x_encoded)
 
     def get_action_and_value(self, x, action=None):
-        # features = self.actor_shared(x)
-        action_mean = self.actor_mean(x)
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_std = torch.exp(action_logstd)
-        # action_logstd = self.actor_logstd(features)
-        # action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
+        x_encoded = self.encode_input(x)
+        logits = self.actor(x_encoded)
+        probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return (
-            action,
-            probs.log_prob(action).sum(1),
-            probs.entropy().sum(1),
-            self.critic(x),
-        )
+        return action, probs.log_prob(action), probs.entropy(), self.critic(x_encoded)
+
+    def encode_input(self, x):
+        if self.state_encoding == "onehot":
+            x_onehot = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                x_onehot[i, int(val.item())] = 1
+            return x_onehot
+        elif self.state_encoding == "binary":
+            x_binary = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                binary = bin(int(val.item()))[2:]
+                padded = binary.zfill(self.observation_size)
+                x_binary[i] = torch.tensor([int(bit) for bit in padded])
+            return x_binary
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -93,7 +93,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def ppo_classical_continuous(config):
+def ppo_classical_discrete_state(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
     num_minibatches = config["num_minibatches"]
@@ -113,6 +113,12 @@ def ppo_classical_continuous(config):
     target_kl = config["target_kl"]
     max_grad_norm = config["max_grad_norm"]
     cuda = config["cuda"]
+    state_encoding = config["state_encoding"]
+
+    assert state_encoding in [
+        "onehot",
+        "binary",
+    ], "state encoding needs to be binary or onehot"
 
     if target_kl == "None":
         target_kl = None
@@ -136,7 +142,7 @@ def ppo_classical_continuous(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -155,21 +161,25 @@ def ppo_classical_continuous(config):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
     assert (
         env_id in gym.envs.registry.keys()
     ), f"{env_id} is not a valid gymnasium environment"
 
-    # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv(
+        [make_env(env_id, config) for i in range(num_envs)],
+    )
+
     assert isinstance(
-        envs.single_action_space, gym.spaces.Box
-    ), "only continuous action space is supported"
+        envs.single_action_space, gym.spaces.Discrete
+    ), "only discrete action space is supported"
+    assert isinstance(
+        envs.single_observation_space, gym.spaces.Discrete
+    ), "only discrete state space is supported"
 
-    agent = PPOAgentClassicalContinuous(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=learning_rate, eps=1e-5)
+    agent = PPOAgentClassical(envs, state_encoding).to(device)
+    optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
 
-    # ALGO Logic: Storage setup
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(
         device
     )
@@ -192,7 +202,7 @@ def ppo_classical_continuous(config):
     next_obs, _ = envs.reset(seed=seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(num_envs).to(device)
-    
+
     for iteration in range(1, num_iterations + 1):
         # Annealing the rate if instructed to do so.
         if anneal_lr:
@@ -222,6 +232,9 @@ def ppo_classical_continuous(config):
                 next_done
             ).to(device)
 
+            metrics = {}
+            # If the episode is finished, report the metrics
+            # Here addtional logging can be added
             if "episode" in infos:
                 for idx, finished in enumerate(infos["_episode"]):
                     if finished:
@@ -233,13 +246,13 @@ def ppo_classical_continuous(config):
                         metrics["global_step"] = global_step
                         log_metrics(config, metrics, report_path)
 
-                if global_episodes % print_interval == 0 and not ray.is_initialized():
-                    print(
-                        "Global step: ",
-                        global_step,
-                        " Mean return: ",
-                        np.mean(episode_returns),
-                    )
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                print(
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
+                )
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -277,7 +290,7 @@ def ppo_classical_continuous(config):
                 mb_inds = b_inds[start:end]
 
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
-                    b_obs[mb_inds], b_actions[mb_inds]
+                    b_obs[mb_inds], b_actions.long()[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
@@ -332,6 +345,7 @@ def ppo_classical_continuous(config):
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         metrics = {}
         metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
@@ -360,12 +374,13 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "ppo_classical_continuous"  # Name of the trial
+        trial_name: str = "ppo_classical_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "Pendulum-v1"  # Environment ID
+        env_id: str = "FrozenLake-v1"  # Environment ID
 
         # Algorithm parameters
         total_timesteps: int = 1000000  # Total timesteps for the experiment
@@ -387,6 +402,9 @@ if __name__ == "__main__":
         target_kl: float = None  # Target KL divergence threshold
         cuda: bool = False  # Whether to use CUDA
         save_model: bool = True  # Save the model after the run
+        state_encoding: str = (
+            "binary"  # Type of state encoding, either "binary" or "onehot"
+        )
 
     config = vars(Config())
 
@@ -404,4 +422,4 @@ if __name__ == "__main__":
     with open(config_path, "w") as file:
         yaml.dump(config, file)
 
-    ppo_classical_continuous(config)
+    ppo_classical_discrete_state(config)

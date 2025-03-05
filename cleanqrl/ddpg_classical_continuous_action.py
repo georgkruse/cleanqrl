@@ -3,23 +3,24 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
 import ray
-import yaml
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import wandb
+import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
 from wrapper import ReplayBufferWrapper
+
 
 def make_env(env_id, config):
     def thunk():
@@ -91,7 +92,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def ddpg_classical(config: dict):
+def ddpg_classical_continuous_action(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -121,7 +122,7 @@ def ddpg_classical(config: dict):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -204,19 +205,16 @@ def ddpg_classical(config: dict):
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
-            if global_episodes % print_interval == 0 and not ray.is_initialized():
-                print(
-                    "Global step: ",
-                    global_step,
-                    " Mean return: ",
-                    np.mean(episode_returns),
-                )
+        if global_episodes % print_interval == 0 and not ray.is_initialized():
+            print(
+                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+            )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
-           if trunc:
-               real_next_obs[idx] = infos["final_observation"][idx]
+            if trunc:
+                real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
@@ -284,9 +282,10 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "ddpg_classical"  # Name of the trial
+        trial_name: str = "ddpg_classical_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "MountainCarContinuous-v0"  # Environment ID
@@ -323,4 +322,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    ddpg_classical(config)
+    ddpg_classical_continuous_action(config)

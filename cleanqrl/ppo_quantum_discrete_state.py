@@ -3,10 +3,10 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -18,22 +18,14 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from torch.distributions.normal import Normal
+from torch.distributions.categorical import Categorical
 
 
 def make_env(env_id, config):
     def thunk():
-
         env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(
-            env
-        )  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+
         return env
 
     return thunk
@@ -61,22 +53,28 @@ def hardware_efficient_ansatz(
     if agent_type == "actor":
         return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
     elif agent_type == "critic":
-        return [qml.expval(qml.PauliX(0))]
+        return [qml.expval(qml.PauliZ(0))]
 
 
-class PPOAgentQuantumContinuous(nn.Module):
+class PPOAgentQuantum(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.num_features = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = np.prod(envs.single_action_space.shape)
+        self.state_encoding = config["state_encoding"]
+
+        if self.state_encoding == "onehot":
+            self.observation_size = envs.single_observation_space.n
+        elif self.state_encoding == "binary":
+            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+
+        self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
         assert (
-            self.num_qubits >= self.num_features
-        ), "Number of qubits must be greater than or equal to the number of features"
+            self.num_qubits >= self.observation_size
+        ), "Number of qubits must be greater than or equal to the observation size"
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
@@ -105,11 +103,6 @@ class PPOAgentQuantumContinuous(nn.Module):
             requires_grad=True,
         )
 
-        # additional trainable parameters for the variance of the continuous actions
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, np.prod(envs.single_action_space.shape))
-        )
-
         device = qml.device(config["device"], wires=self.wires)
         self.quantum_circuit = qml.QNode(
             hardware_efficient_ansatz,
@@ -119,8 +112,9 @@ class PPOAgentQuantumContinuous(nn.Module):
         )
 
     def get_value(self, x):
+        x_encoded = self.encode_input(x)
         value = self.quantum_circuit(
-            x,
+            x_encoded,
             self.input_scaling_critic,
             self.weights_critic,
             self.wires,
@@ -133,8 +127,9 @@ class PPOAgentQuantumContinuous(nn.Module):
         return value
 
     def get_action_and_value(self, x, action=None):
-        action_mean = self.quantum_circuit(
-            x,
+        x_encoded = self.encode_input(x)
+        logits = self.quantum_circuit(
+            x_encoded,
             self.input_scaling_actor,
             self.weights_actor,
             self.wires,
@@ -142,19 +137,26 @@ class PPOAgentQuantumContinuous(nn.Module):
             self.num_actions,
             "actor",
         )
-        action_mean = torch.stack(action_mean, dim=1)
-        action_mean = action_mean * self.output_scaling_actor
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
+        logits = torch.stack(logits, dim=1)
+        logits = logits * self.output_scaling_actor
+        probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return (
-            action,
-            probs.log_prob(action).sum(1),
-            probs.entropy().sum(1),
-            self.get_value(x),
-        )
+        return action, probs.log_prob(action), probs.entropy(), self.get_value(x)
+
+    def encode_input(self, x):
+        if self.state_encoding == "onehot":
+            x_onehot = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                x_onehot[i, int(val.item())] = np.pi
+            return x_onehot
+        elif self.state_encoding == "binary":
+            x_binary = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                binary = bin(int(val.item()))[2:]
+                padded = binary.zfill(self.observation_size)
+                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
+            return x_binary
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -168,7 +170,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def ppo_quantum_continuous(config):
+def ppo_quantum_discrete_state(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
     num_minibatches = config["num_minibatches"]
@@ -213,7 +215,7 @@ def ppo_quantum_continuous(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -222,6 +224,7 @@ def ppo_quantum_continuous(config):
             dir=report_path,
         )
 
+    # TRY NOT TO MODIFY: seeding
     if config["seed"] is None:
         seed = np.random.randint(0, 1e9)
     else:
@@ -231,18 +234,19 @@ def ppo_quantum_continuous(config):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
     assert (
         env_id in gym.envs.registry.keys()
     ), f"{env_id} is not a valid gymnasium environment"
 
-    # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv(
+        [make_env(env_id, config) for i in range(num_envs)],
+    )
     assert isinstance(
-        envs.single_action_space, gym.spaces.Box
-    ), "only continuous action space is supported"
+        envs.single_action_space, gym.spaces.Discrete
+    ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantumContinuous(envs, config).to(
+    agent = PPOAgentQuantum(envs, config).to(
         device
     )  # This is what I need to change to fit quantum into the picture
     optimizer = optim.Adam(
@@ -255,7 +259,7 @@ def ppo_quantum_continuous(config):
             {"params": agent.weights_critic, "lr": lr_weights},
         ]
     )
-    # ALGO Logic: Storage setup
+
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(
         device
     )
@@ -310,6 +314,9 @@ def ppo_quantum_continuous(config):
                 next_done
             ).to(device)
 
+            metrics = {}
+            # If the episode is finished, report the metrics
+            # Here addtional logging can be added
             if "episode" in infos:
                 for idx, finished in enumerate(infos["_episode"]):
                     if finished:
@@ -321,13 +328,13 @@ def ppo_quantum_continuous(config):
                         metrics["global_step"] = global_step
                         log_metrics(config, metrics, report_path)
 
-                if global_episodes % print_interval == 0 and not ray.is_initialized():
-                    print(
-                        "Global step: ",
-                        global_step,
-                        " Mean return: ",
-                        np.mean(episode_returns),
-                    )
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                print(
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
+                )
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -365,7 +372,7 @@ def ppo_quantum_continuous(config):
                 mb_inds = b_inds[start:end]
 
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
-                    b_obs[mb_inds], b_actions[mb_inds]
+                    b_obs[mb_inds], b_actions.long()[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
@@ -420,6 +427,7 @@ def ppo_quantum_continuous(config):
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         metrics = {}
         metrics["lr_input_scaling"] = optimizer.param_groups[0]["lr"]
@@ -450,16 +458,16 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "ppo_quantum_continuous"  # Name of the trial
+        trial_name: str = "ppo_quantum_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "Pendulum-v1"  # Environment ID
+        env_id: str = "FrozenLake-v1"  # Environment ID
 
         # Algorithm parameters
         total_timesteps: int = 1000000  # Total timesteps for the experiment
-        learning_rate: float = 3e-4  # Learning rate of the optimizer
         num_envs: int = 1  # Number of parallel environments
         seed: int = None  # Seed for reproducibility
         num_steps: int = 2048  # Steps per environment per policy rollout
@@ -479,11 +487,14 @@ if __name__ == "__main__":
         max_grad_norm: float = 0.5  # Maximum gradient norm for clipping
         target_kl: float = None  # Target KL divergence threshold
         cuda: bool = False  # Whether to use CUDA
-        num_qubits: int = 3  # Number of qubits
+        num_qubits: int = 16  # Number of qubits
         num_layers: int = 2  # Number of layers in the quantum circuit
         device: str = "default.qubit"  # Quantum device
         diff_method: str = "backprop"  # Differentiation method
         save_model: bool = True  # Save the model after the run
+        state_encoding: str = (
+            "binary"  # Type of state encoding, either "binary" or "onehot"
+        )
 
     config = vars(Config())
 
@@ -501,4 +512,4 @@ if __name__ == "__main__":
     with open(config_path, "w") as file:
         yaml.dump(config, file)
 
-    ppo_quantum_continuous(config)
+    ppo_quantum_discrete_state(config)

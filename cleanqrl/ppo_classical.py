@@ -3,10 +3,10 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -121,7 +121,7 @@ def ppo_classical(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -173,7 +173,7 @@ def ppo_classical(config):
     global_episodes = 0
     print_interval = 50
     episode_returns = deque(maxlen=print_interval)
-    
+
     # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     next_obs, _ = envs.reset(seed=seed)
@@ -223,13 +223,13 @@ def ppo_classical(config):
                         metrics["global_step"] = global_step
                         log_metrics(config, metrics, report_path)
 
-                if global_episodes % print_interval == 0 and not ray.is_initialized():
-                    print(
-                        "Global step: ",
-                        global_step,
-                        " Mean return: ",
-                        np.mean(episode_returns),
-                    )
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                print(
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
+                )
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -354,6 +354,7 @@ if __name__ == "__main__":
         trial_name: str = "ppo_classical"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "CartPole-v1"  # Environment ID

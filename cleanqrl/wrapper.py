@@ -174,6 +174,7 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
 
+
 class ReplayBufferWrapper(gym.Wrapper):
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
@@ -182,6 +183,7 @@ class ReplayBufferWrapper(gym.Wrapper):
         self.previous_state = state
 
         return state, reward, terminate, truncate, info
+
 
 def create_jumanji_env(env_id, config):
     if env_id == "TSP-v1":

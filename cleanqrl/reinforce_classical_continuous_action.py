@@ -16,13 +16,20 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from torch.distributions.categorical import Categorical
 
 
 def make_env(env_id, config=None):
     def thunk():
+
         env = gym.make(env_id)
+        env = gym.wrappers.FlattenObservation(
+            env
+        )  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = gym.wrappers.ClipAction(env)
+        env = gym.wrappers.NormalizeObservation(env)
+        env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
+        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
@@ -31,17 +38,22 @@ def make_env(env_id, config=None):
 class ReinforceAgentClassical(nn.Module):
     def __init__(self, envs):
         super().__init__()
-        self.network = nn.Sequential(
+        self.actor_mean = nn.Sequential(
             nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, np.prod(envs.single_action_space.shape)),
+        )
+        self.actor_logstd = nn.Parameter(
+            torch.zeros(1, np.prod(envs.single_action_space.shape))
         )
 
     def get_action_and_logprob(self, x):
-        logits = self.network(x)
-        probs = Categorical(logits=logits)
+        action_mean = self.actor_mean(x)
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
+        probs = torch.distributions.Normal(action_mean, action_std)
         action = probs.sample()
         return action, probs.log_prob(action)
 
@@ -57,7 +69,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def reinforce_classical(config):
+def reinforce_classical_continuous_action(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
@@ -105,12 +117,15 @@ def reinforce_classical(config):
     ), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for _ in range(num_envs)],
+        [make_env(env_id, config) for _ in range(num_envs)],
     )
 
     assert isinstance(
-        envs.single_action_space, gym.spaces.Discrete
-    ), "only discrete action space is supported"
+        envs.single_action_space, gym.spaces.Box
+    ), "only continuous action space is supported"
+    assert isinstance(
+        envs.single_observation_space, gym.spaces.Box
+    ), "only continuous observation space is supported"
 
     # Here, the classical agent is initialized with a Neural Network
     agent = ReinforceAgentClassical(envs).to(device)
@@ -131,6 +146,7 @@ def reinforce_classical(config):
         log_probs = []
         rewards = []
         done = False
+        metrics = {}
 
         # Episode loop
         while not done:
@@ -206,20 +222,20 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "reinforce_classical"  # Name of the trial
+        trial_name: str = "reinforce_classical_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "CartPole-v1"  # Environment ID
+        env_id: str = "Pendulum-v1"  # Environment ID
 
         # Algorithm parameters
         num_envs: int = 2  # Number of environments
         seed: int = None  # Seed for reproducibility
-        total_timesteps: int = 100000  # Total number of timesteps
-        gamma: float = 0.99  # discount factor
-        lr: float = 0.01  # Learning rate for network weights
+        total_timesteps: int = 200000  # Total number of timesteps
+        gamma: float = 0.9  # discount factor
+        lr: float = 0.001  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
         save_model: bool = True  # Save the model after the run
 
@@ -240,4 +256,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    reinforce_classical(config)
+    reinforce_classical_continuous_action(config)

@@ -3,10 +3,10 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -19,10 +19,7 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
-
-from cleanqrl.wrapper import create_jumanji_env
-
-# from cleanqrl.wrapper_utils import knapsack_converter
+from wrapper import create_jumanji_env
 
 
 def make_env(env_id, config):
@@ -115,17 +112,15 @@ class PPOAgentQuantumJumanji(nn.Module):
 
         device = qml.device(config["device"], wires=self.wires)
         self.quantum_circuit = qml.QNode(
-            cost_hamiltonian_ansatz,
+            hardware_efficient_ansatz,
             device,
             diff_method=config["diff_method"],
             interface="torch",
         )
 
     def get_value(self, x):
-        offset, h, J = self.envs.envs[0].convert_state_to_cost_hamiltonian(x[0])
         value = self.quantum_circuit(
-            h,
-            J,
+            x,
             self.input_scaling_critic,
             self.weights_critic,
             self.wires,
@@ -138,10 +133,8 @@ class PPOAgentQuantumJumanji(nn.Module):
         return value
 
     def get_action_and_value(self, x, action=None):
-        offset, h, J = self.envs.envs[0].convert_state_to_cost_hamiltonian(x[0])
         logits = self.quantum_circuit(
-            h,
-            J,
+            x,
             self.input_scaling_actor,
             self.weights_actor,
             self.wires,
@@ -213,7 +206,7 @@ def ppo_quantum_jumanji(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -233,7 +226,6 @@ def ppo_quantum_jumanji(config):
     torch.manual_seed(seed)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
-    # assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, config) for i in range(num_envs)],
@@ -242,9 +234,7 @@ def ppo_quantum_jumanji(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantumJumanji(envs, config).to(
-        device
-    )  # This is what I need to change to fit quantum into the picture
+    agent = PPOAgentQuantumJumanji(envs, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
@@ -331,11 +321,11 @@ def ppo_quantum_jumanji(config):
                             )
                         log_metrics(config, metrics, report_path)
 
-                if global_episodes % print_interval == 0 and not ray.is_initialized():
-                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
-                    if "approximation_ratio" in infos.keys():
-                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
-                    print(logging_info)
+            if global_episodes % print_interval == 0 and not ray.is_initialized():
+                logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
+                if "approximation_ratio" in infos.keys():
+                    logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
+                print(logging_info)
 
         # bootstrap value if not done
         with torch.no_grad():

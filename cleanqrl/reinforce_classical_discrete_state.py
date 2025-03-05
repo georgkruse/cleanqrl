@@ -29,10 +29,17 @@ def make_env(env_id, config=None):
 
 
 class ReinforceAgentClassical(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, envs, state_encoding):
         super().__init__()
+        self.state_encoding = state_encoding
+
+        if self.state_encoding == "onehot":
+            self.observation_size = envs.single_observation_space.n
+        elif self.state_encoding == "binary":
+            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+
         self.network = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(self.observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
@@ -40,10 +47,25 @@ class ReinforceAgentClassical(nn.Module):
         )
 
     def get_action_and_logprob(self, x):
-        logits = self.network(x)
+        x_encoded = self.encode_input(x)
+        logits = self.network(x_encoded)
         probs = Categorical(logits=logits)
         action = probs.sample()
         return action, probs.log_prob(action)
+
+    def encode_input(self, x):
+        if self.state_encoding == "onehot":
+            x_onehot = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                x_onehot[i, int(val.item())] = 1
+            return x_onehot
+        elif self.state_encoding == "binary":
+            x_binary = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                binary = bin(int(val.item()))[2:]
+                padded = binary.zfill(self.observation_size)
+                x_binary[i] = torch.tensor([int(bit) for bit in padded])
+            return x_binary
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -57,12 +79,18 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def reinforce_classical(config):
+def reinforce_classical_discrete_state(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
     lr = config["lr"]
     gamma = config["gamma"]
+    state_encoding = config["state_encoding"]
+
+    assert state_encoding in [
+        "onehot",
+        "binary",
+    ], "state encoding needs to be binary or onehot"
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -111,9 +139,12 @@ def reinforce_classical(config):
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
+    assert isinstance(
+        envs.single_observation_space, gym.spaces.Discrete
+    ), "only discrete state space is supported"
 
     # Here, the classical agent is initialized with a Neural Network
-    agent = ReinforceAgentClassical(envs).to(device)
+    agent = ReinforceAgentClassical(envs, state_encoding).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=lr)
 
     # global parameters to log
@@ -206,13 +237,13 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "reinforce_classical"  # Name of the trial
+        trial_name: str = "reinforce_classical_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "CartPole-v1"  # Environment ID
+        env_id: str = "FrozenLake-v1"  # Environment ID
 
         # Algorithm parameters
         num_envs: int = 2  # Number of environments
@@ -222,6 +253,9 @@ if __name__ == "__main__":
         lr: float = 0.01  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
         save_model: bool = True  # Save the model after the run
+        state_encoding: str = (
+            "binary"  # Type of state encoding, either "binary" or "onehot"
+        )
 
     config = vars(Config())
 
@@ -240,4 +274,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    reinforce_classical(config)
+    reinforce_classical_discrete_state(config)

@@ -28,6 +28,8 @@ def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = ReplayBufferWrapper(env)
+
         return env
 
     return thunk
@@ -57,7 +59,13 @@ class DQNAgentQuantum(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod()
+        self.state_encoding = config["state_encoding"]
+
+        if self.state_encoding == "onehot":
+            self.observation_size = envs.single_observation_space.n
+        elif self.state_encoding == "binary":
+            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
 
@@ -93,8 +101,9 @@ class DQNAgentQuantum(nn.Module):
         )
 
     def forward(self, x):
+        x_encoded = self.encode_input(x)
         logits = self.quantum_circuit(
-            x,
+            x_encoded,
             self.input_scaling,
             self.weights,
             self.wires,
@@ -104,6 +113,20 @@ class DQNAgentQuantum(nn.Module):
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
         return logits
+
+    def encode_input(self, x):
+        if self.state_encoding == "onehot":
+            x_onehot = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                x_onehot[i, int(val.item())] = np.pi
+            return x_onehot
+        elif self.state_encoding == "binary":
+            x_binary = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                binary = bin(int(val.item()))[2:]
+                padded = binary.zfill(self.observation_size)
+                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
+            return x_binary
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -122,7 +145,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def dqn_quantum(config: dict):
+def dqn_quantum_discrete_state(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -299,13 +322,13 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "dqn_quantum"  # Name of the trial
+        trial_name: str = "dqn_quantum_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "CartPole-v1"  # Environment ID
+        env_id: str = "FrozenLake-v1"  # Environment ID
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
@@ -330,6 +353,9 @@ if __name__ == "__main__":
         device: str = "default.qubit"  # Quantum device
         diff_method: str = "backprop"  # Differentiation method
         save_model: bool = True  # Save the model after the run
+        state_encoding: str = (
+            "binary"  # Type of state encoding, either "binary" or "onehot"
+        )
 
     config = vars(Config())
 
@@ -348,4 +374,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    dqn_quantum(config)
+    dqn_quantum_discrete_state(config)

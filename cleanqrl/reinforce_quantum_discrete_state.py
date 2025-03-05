@@ -2,13 +2,14 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
+import pennylane as qml
 import ray
 import torch
 import torch.nn as nn
@@ -16,46 +17,112 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
+from torch.distributions.categorical import Categorical
 
 
 def make_env(env_id, config=None):
     def thunk():
-
         env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(
-            env
-        )  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
 
 
-class ReinforceAgentClassical(nn.Module):
-    def __init__(self, envs):
+def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
+    for layer in range(layers):
+        for i, wire in enumerate(wires):
+            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+
+        for i, wire in enumerate(wires):
+            qml.RY(weights[layer, i], wires=[wire])
+
+        for i, wire in enumerate(wires):
+            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
+
+        if len(wires) == 2:
+            qml.CZ(wires=wires)
+        else:
+            for i in range(len(wires)):
+                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
+
+    return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+
+
+class ReinforceAgentQuantum(nn.Module):
+    def __init__(self, envs, config):
         super().__init__()
-        self.actor_mean = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, np.prod(envs.single_action_space.shape)),
+        self.config = config
+        self.state_encoding = config["state_encoding"]
+
+        if self.state_encoding == "onehot":
+            self.observation_size = envs.single_observation_space.n
+        elif self.state_encoding == "binary":
+            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+
+        self.num_actions = envs.single_action_space.n
+        self.num_qubits = config["num_qubits"]
+
+        assert (
+            self.num_qubits >= self.observation_size
+        ), "Number of qubits must be greater than or equal to the observation size"
+        assert (
+            self.num_qubits >= self.num_actions
+        ), "Number of qubits must be greater than or equal to the number of actions"
+
+        self.num_layers = config["num_layers"]
+        self.wires = range(self.num_qubits)
+
+        # input and output scaling are always initialized as ones
+        self.input_scaling = nn.Parameter(
+            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
         )
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, np.prod(envs.single_action_space.shape))
+        self.output_scaling = nn.Parameter(
+            torch.ones(self.num_actions), requires_grad=True
+        )
+        # trainable weights are initialized randomly between -pi and pi
+        self.weights = nn.Parameter(
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            requires_grad=True,
+        )
+
+        device = qml.device(config["device"], wires=self.wires)
+        self.quantum_circuit = qml.QNode(
+            hardware_efficient_ansatz,
+            device,
+            diff_method=config["diff_method"],
+            interface="torch",
         )
 
     def get_action_and_logprob(self, x):
-        action_mean = self.actor_mean(x)
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_std = torch.exp(action_logstd)
-        probs = torch.distributions.Normal(action_mean, action_std)
+        x_encoded = self.encode_input(x)
+        logits = self.quantum_circuit(
+            x_encoded,
+            self.input_scaling,
+            self.weights,
+            self.wires,
+            self.num_layers,
+            self.num_actions,
+        )
+        logits = torch.stack(logits, dim=1)
+        logits = logits * self.output_scaling
+        probs = Categorical(logits=logits)
         action = probs.sample()
         return action, probs.log_prob(action)
+
+    def encode_input(self, x):
+        if self.state_encoding == "onehot":
+            x_onehot = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                x_onehot[i, int(val.item())] = np.pi
+            return x_onehot
+        elif self.state_encoding == "binary":
+            x_binary = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                binary = bin(int(val.item()))[2:]
+                padded = binary.zfill(self.observation_size)
+                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
+            return x_binary
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -69,12 +136,14 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def reinforce_classical_continuous(config):
+def reinforce_quantum_discrete_state(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
-    lr = config["lr"]
     gamma = config["gamma"]
+    lr_input_scaling = config["lr_input_scaling"]
+    lr_weights = config["lr_weights"]
+    lr_output_scaling = config["lr_output_scaling"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -91,7 +160,7 @@ def reinforce_classical_continuous(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -117,24 +186,33 @@ def reinforce_classical_continuous(config):
     ), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, config) for _ in range(num_envs)],
+        [make_env(env_id) for _ in range(num_envs)],
     )
 
     assert isinstance(
-        envs.single_action_space, gym.spaces.Box
-    ), "only continuous action space is supported"
+        envs.single_action_space, gym.spaces.Discrete
+    ), "only discrete action space is supported"
+    assert isinstance(
+        envs.single_observation_space, gym.spaces.Discrete
+    ), "only discrete state space is supported"
 
     # Here, the classical agent is initialized with a Neural Network
-    agent = ReinforceAgentClassical(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=lr)
+    agent = ReinforceAgentQuantum(envs, config).to(device)
+    optimizer = optim.Adam(
+        [
+            {"params": agent.input_scaling, "lr": lr_input_scaling},
+            {"params": agent.output_scaling, "lr": lr_output_scaling},
+            {"params": agent.weights, "lr": lr_weights},
+        ]
+    )
 
     # global parameters to log
     global_step = 0
     global_episodes = 0
     print_interval = 50
     episode_returns = deque(maxlen=print_interval)
-    
-    # TRY NOT TO MODIFY: start the game  
+
+    # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     obs, _ = envs.reset()
     obs = torch.Tensor(obs).to(device)
@@ -143,7 +221,6 @@ def reinforce_classical_continuous(config):
         log_probs = []
         rewards = []
         done = False
-        metrics = {}
 
         # Episode loop
         while not done:
@@ -169,7 +246,7 @@ def reinforce_classical_continuous(config):
             discounted_rewards.insert(0, cumulative_reward)
 
         # Normalize rewards
-        discounted_rewards = torch.tensor(discounted_rewards).to(device)
+        discounted_rewards = torch.tensor(np.array(discounted_rewards)).to(device)
         discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (
             discounted_rewards.std() + 1e-9
         )
@@ -199,13 +276,10 @@ def reinforce_classical_continuous(config):
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
                     log_metrics(config, metrics, report_path)
 
-            if global_episodes % print_interval == 0 and not ray.is_initialized():
-                print(
-                    "Global step: ",
-                    global_step,
-                    " Mean return: ",
-                    np.mean(episode_returns),
-                )
+        if global_episodes % print_interval == 0 and not ray.is_initialized():
+            print(
+                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+            )
 
     if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
@@ -222,21 +296,31 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "reinforce_classical_continuous"  # Name of the trial
+        trial_name: str = "reinforce_quantum_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "Pendulum-v1"  # Environment ID
+        env_id: str = "FrozenLake-v1"  # Environment ID
 
         # Algorithm parameters
-        num_envs: int = 2  # Number of environments
+        num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
-        total_timesteps: int = 200000  # Total number of timesteps
-        gamma: float = 0.9  # discount factor
-        lr: float = 0.001  # Learning rate for network weights
+        total_timesteps: int = 100000  # Total number of timesteps
+        gamma: float = 0.99  # discount factor
+        lr_input_scaling: float = 0.01  # Learning rate for input scaling
+        lr_weights: float = 0.01  # Learning rate for variational parameters
+        lr_output_scaling: float = 0.01  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
+        num_qubits: int = 4  # Number of qubits
+        num_layers: int = 4  # Number of layers in the quantum circuit
+        device: str = "lightning.qubit"  # Quantum device
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
+        state_encoding: str = (
+            "binary"  # Type of state encoding, either "binary" or "onehot"
+        )
 
     config = vars(Config())
 
@@ -255,4 +339,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    reinforce_classical_continuous(config)
+    reinforce_quantum_discrete_state(config)

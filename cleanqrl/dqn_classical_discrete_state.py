@@ -1,5 +1,4 @@
 # This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
-import datetime
 import json
 import os
 import random
@@ -11,7 +10,6 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
-import pennylane as qml
 import ray
 import torch
 import torch.nn as nn
@@ -28,82 +26,48 @@ def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = ReplayBufferWrapper(env)
         return env
 
     return thunk
 
 
-def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
-    for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
-
-        for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires=[wire])
-
-        for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
-
-        if len(wires) == 2:
-            qml.CZ(wires=wires)
-        else:
-            for i in range(len(wires)):
-                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
-
-    return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
-
-
-class DQNAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+# ALGO LOGIC: initialize agent here:
+class DQNAgentClassical(nn.Module):
+    def __init__(self, envs, state_encoding):
         super().__init__()
-        self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
-        self.num_qubits = config["num_qubits"]
+        self.state_encoding = state_encoding
 
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
+        if self.state_encoding == "onehot":
+            self.observation_size = envs.single_observation_space.n
+        elif self.state_encoding == "binary":
+            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
 
-        self.num_layers = config["num_layers"]
-        self.wires = range(self.num_qubits)
-
-        # input and output scaling are always initialized as ones
-        self.input_scaling = nn.Parameter(
-            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
-        )
-        self.output_scaling = nn.Parameter(
-            torch.ones(self.num_actions), requires_grad=True
-        )
-        # trainable weights are initialized randomly between -pi and pi
-        self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
-            requires_grad=True,
-        )
-
-        device = qml.device(config["device"], wires=self.wires)
-        self.quantum_circuit = qml.QNode(
-            hardware_efficient_ansatz,
-            device,
-            diff_method=config["diff_method"],
-            interface="torch",
+        self.network = nn.Sequential(
+            nn.Linear(self.observation_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, envs.single_action_space.n),
         )
 
     def forward(self, x):
-        logits = self.quantum_circuit(
-            x,
-            self.input_scaling,
-            self.weights,
-            self.wires,
-            self.num_layers,
-            self.num_actions,
-        )
-        logits = torch.stack(logits, dim=1)
-        logits = logits * self.output_scaling
-        return logits
+        x_encoded = self.encode_state(x)
+        return self.network(x_encoded)
+
+    def encode_state(self, x):
+        if self.state_encoding == "onehot":
+            x_onehot = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                x_onehot[i, int(val.item())] = 1
+            return x_onehot
+        elif self.state_encoding == "binary":
+            x_binary = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                binary = bin(int(val.item()))[2:]
+                padded = binary.zfill(self.observation_size)
+                x_binary[i] = torch.tensor([int(bit) for bit in padded])
+            return x_binary
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -122,7 +86,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def dqn_quantum(config: dict):
+def dqn_classical_discrete_state(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -137,9 +101,13 @@ def dqn_quantum(config: dict):
     gamma = config["gamma"]
     target_network_frequency = config["target_network_frequency"]
     tau = config["tau"]
-    lr_input_scaling = config["lr_input_scaling"]
-    lr_weights = config["lr_weights"]
-    lr_output_scaling = config["lr_output_scaling"]
+    lr = config["lr"]
+    state_encoding = config["state_encoding"]
+
+    assert state_encoding in [
+        "onehot",
+        "binary",
+    ], "state encoding needs to be binary or onehot"
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -173,23 +141,25 @@ def dqn_quantum(config: dict):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    assert (
+        env_id in gym.envs.registry.keys()
+    ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
     envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
+
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
+    assert isinstance(
+        envs.single_observation_space, gym.spaces.Discrete
+    ), "only discrete state space is supported"
 
-    q_network = DQNAgentQuantum(envs, config).to(device)
-    optimizer = optim.Adam(
-        [
-            {"params": q_network.input_scaling, "lr": lr_input_scaling},
-            {"params": q_network.output_scaling, "lr": lr_output_scaling},
-            {"params": q_network.weights, "lr": lr_weights},
-        ]
-    )
-    target_network = DQNAgentQuantum(envs, config).to(device)
+    q_network = DQNAgentClassical(envs, state_encoding).to(device)
+    optimizer = optim.Adam(q_network.parameters(), lr=lr)
+    target_network = DQNAgentClassical(envs, state_encoding).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -235,7 +205,7 @@ def dqn_quantum(config: dict):
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
-
+        
         if global_episodes % print_interval == 0 and not ray.is_initialized():
             print(
                 "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
@@ -299,19 +269,19 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "dqn_quantum"  # Name of the trial
+        trial_name: str = "dqn_classical_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "CartPole-v1"  # Environment ID
+        env_id: str = "FrozenLake-v1"  # Environment ID
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
         buffer_size: int = 10000  # Size of the replay buffer
-        total_timesteps: int = 10000  # Total number of timesteps
+        total_timesteps: int = 100000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration
         end_e: float = 0.01  # Ending value of epsilon for exploration
         exploration_fraction: float = 0.1  # Fraction of total timesteps for exploration
@@ -321,15 +291,12 @@ if __name__ == "__main__":
         gamma: float = 0.99  # Discount factor
         target_network_frequency: int = 100  # Frequency of target network updates
         tau: float = 0.01  # Soft update coefficient
-        lr_input_scaling: float = 0.01  # Learning rate for input scaling
-        lr_weights: float = 0.01  # Learning rate for variational parameters
-        lr_output_scaling: float = 0.01  # Learning rate for output scaling
+        lr: float = 0.01  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
-        num_qubits: int = 4  # Number of qubits
-        num_layers: int = 2  # Number of layers in the quantum circuit
-        device: str = "default.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
         save_model: bool = True  # Save the model after the run
+        state_encoding: str = (
+            "binary"  # Type of state encoding, either "binary" or "onehot"
+        )
 
     config = vars(Config())
 
@@ -340,7 +307,6 @@ if __name__ == "__main__":
     config["path"] = os.path.join(
         Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
     )
-
     # Create the directory and save a copy of the config file so that the experiment can be replicated
     os.makedirs(os.path.dirname(config["path"] + "/"), exist_ok=True)
     config_path = os.path.join(config["path"], "config.yml")
@@ -348,4 +314,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    dqn_quantum(config)
+    dqn_classical_discrete_state(config)

@@ -2,10 +2,10 @@ import json
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -121,7 +121,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def reinforce_quantum_continuous(config):
+def reinforce_quantum_continuous_action(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
     env_id = config["env_id"]
@@ -145,7 +145,7 @@ def reinforce_quantum_continuous(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -193,8 +193,8 @@ def reinforce_quantum_continuous(config):
     global_episodes = 0
     print_interval = 50
     episode_returns = deque(maxlen=print_interval)
-    
-    # TRY NOT TO MODIFY: start the game  
+
+    # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     obs, _ = envs.reset()
     obs = torch.Tensor(obs).to(device)
@@ -228,7 +228,7 @@ def reinforce_quantum_continuous(config):
             discounted_rewards.insert(0, cumulative_reward)
 
         # Normalize rewards
-        discounted_rewards = torch.tensor(discounted_rewards).to(device)
+        discounted_rewards = torch.tensor(np.array(discounted_rewards)).to(device)
         discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (
             discounted_rewards.std() + 1e-9
         )
@@ -258,13 +258,10 @@ def reinforce_quantum_continuous(config):
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
                     log_metrics(config, metrics, report_path)
 
-            if global_episodes % print_interval == 0 and not ray.is_initialized():
-                print(
-                    "Global step: ",
-                    global_step,
-                    " Mean return: ",
-                    np.mean(episode_returns),
-                )
+        if global_episodes % print_interval == 0 and not ray.is_initialized():
+            print(
+                "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+            )
 
     if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
@@ -281,9 +278,10 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "reinforce_quantum_continuous"  # Name of the trial
+        trial_name: str = "reinforce_quantum_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "Pendulum-v1"  # Environment ID
@@ -320,4 +318,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    reinforce_quantum_continuous(config)
+    reinforce_quantum_continuous_action(config)
