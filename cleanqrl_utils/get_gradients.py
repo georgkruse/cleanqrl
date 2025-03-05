@@ -1,13 +1,15 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
-import ray
 import random
 import time
+
 import gymnasium as gym
 import numpy as np
+import ray
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+
 
 def make_env(env_id):
     def thunk():
@@ -17,6 +19,7 @@ def make_env(env_id):
         return env
 
     return thunk
+
 
 class ContinuousEncoding(gym.ObservationWrapper):
     def observation(self, obs):
@@ -69,17 +72,35 @@ def get_gradients(config):
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id,) for i in range(num_envs)]
+        [
+            make_env(
+                env_id,
+            )
+            for i in range(num_envs)
+        ]
     )
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(
+        envs.single_action_space, gym.spaces.Discrete
+    ), "only discrete action space is supported"
 
     for iteration in range(num_iterations):
         q_network = QRLAgentDQN(envs, config).to(device)
-        optimizer = optim.Adam([
-            {"params": q_network._parameters["input_scaling_actor"], "lr": lr_input_scaling},
-            {"params": q_network._parameters["output_scaling_actor"], "lr": lr_output_scaling},
-            {"params": q_network._parameters["variational_actor"], "lr": lr_variational}
-        ])
+        optimizer = optim.Adam(
+            [
+                {
+                    "params": q_network._parameters["input_scaling_actor"],
+                    "lr": lr_input_scaling,
+                },
+                {
+                    "params": q_network._parameters["output_scaling_actor"],
+                    "lr": lr_output_scaling,
+                },
+                {
+                    "params": q_network._parameters["variational_actor"],
+                    "lr": lr_variational,
+                },
+            ]
+        )
         target_network = QRLAgentDQN(envs, config).to(device)
         target_network.load_state_dict(q_network.state_dict())
 
@@ -100,9 +121,13 @@ def get_gradients(config):
         obs, _ = envs.reset()
         for global_step in range(total_timesteps):
             # ALGO LOGIC: put action logic here
-            epsilon = linear_schedule(start_e, end_e, exploration_fraction * total_timesteps, global_step)
+            epsilon = linear_schedule(
+                start_e, end_e, exploration_fraction * total_timesteps, global_step
+            )
             if random.random() < epsilon:
-                actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+                actions = np.array(
+                    [envs.single_action_space.sample() for _ in range(envs.num_envs)]
+                )
             else:
                 q_values = q_network(torch.Tensor(obs).to(device))
                 actions = torch.argmax(q_values, dim=1).cpu().numpy()
@@ -125,9 +150,15 @@ def get_gradients(config):
                 if global_step % train_frequency == 0:
                     data = rb.sample(batch_size)
                     with torch.no_grad():
-                        target_max, _ = target_network(data.next_observations).max(dim=1)
-                        td_target = data.rewards.flatten() + gamma * target_max * (1 - data.dones.flatten())
-                    old_val = q_network(data.observations).gather(1, data.actions).squeeze()
+                        target_max, _ = target_network(data.next_observations).max(
+                            dim=1
+                        )
+                        td_target = data.rewards.flatten() + gamma * target_max * (
+                            1 - data.dones.flatten()
+                        )
+                    old_val = (
+                        q_network(data.observations).gather(1, data.actions).squeeze()
+                    )
                     loss = F.mse_loss(td_target, old_val)
 
                     # optimize the model
@@ -138,17 +169,20 @@ def get_gradients(config):
                     for name, param in q_network.named_parameters():
                         if param.grad is not None:
                             grads[name] = param.grad.detach().numpy().flatten()
-                    
-                    ray.train.report(metrics = {"gradients":grads})
+
+                    ray.train.report(metrics={"gradients": grads})
                     break
 
                     optimizer.step()
 
             # update target network
             if global_step % target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), q_network.parameters()):
+                for target_network_param, q_network_param in zip(
+                    target_network.parameters(), q_network.parameters()
+                ):
                     target_network_param.data.copy_(
-                        tau * q_network_param.data + (1.0 - tau) * target_network_param.data
+                        tau * q_network_param.data
+                        + (1.0 - tau) * target_network_param.data
                     )
 
     envs.close()

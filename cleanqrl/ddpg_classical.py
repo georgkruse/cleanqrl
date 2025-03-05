@@ -1,4 +1,5 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ddpg/#ddpg_continuous_actionpy
+# This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/ddpg/#ddpg_continuous_actionpy
+import json
 import os
 import random
 import time
@@ -6,16 +7,16 @@ from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
+import ray
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from replay_buffer import ReplayBuffer
-import json
 import wandb
-from torch.utils.tensorboard import SummaryWriter
 from ray.train._internal.session import get_session
-import ray
+from replay_buffer import ReplayBuffer
+from torch.utils.tensorboard import SummaryWriter
+
 
 def make_env(env_id, config):
     def thunk():
@@ -30,7 +31,11 @@ def make_env(env_id, config):
 class QNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape), 256)
+        self.fc1 = nn.Linear(
+            np.array(env.single_observation_space.shape).prod()
+            + np.prod(env.single_action_space.shape),
+            256,
+        )
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 1)
 
@@ -50,10 +55,18 @@ class Actor(nn.Module):
         self.fc_mu = nn.Linear(256, np.prod(env.single_action_space.shape))
         # action rescaling
         self.register_buffer(
-            "action_scale", torch.tensor((env.action_space.high - env.action_space.low) / 2.0, dtype=torch.float32)
+            "action_scale",
+            torch.tensor(
+                (env.action_space.high - env.action_space.low) / 2.0,
+                dtype=torch.float32,
+            ),
         )
         self.register_buffer(
-            "action_bias", torch.tensor((env.action_space.high + env.action_space.low) / 2.0, dtype=torch.float32)
+            "action_bias",
+            torch.tensor(
+                (env.action_space.high + env.action_space.low) / 2.0,
+                dtype=torch.float32,
+            ),
         )
 
     def forward(self, x):
@@ -62,13 +75,14 @@ class Actor(nn.Module):
         x = torch.tanh(self.fc_mu(x))
         return x * self.action_scale + self.action_bias
 
+
 def log_metrics(config, metrics, report_path=None):
-    if config['wandb']:
+    if config["wandb"]:
         wandb.log(metrics)
     if ray.is_initialized():
         ray.train.report(metrics=metrics)
     else:
-        with open(os.path.join(report_path, 'result.json'), "a") as f:
+        with open(os.path.join(report_path, "result.json"), "a") as f:
             json.dump(metrics, f)
             f.write("\n")
 
@@ -90,31 +104,31 @@ def ddpg_classical(config: dict):
 
     if config["seed"] == "None":
         config["seed"] = None
-    
+
     if not ray.is_initialized():
         report_path = config["path"]
-        name = config['trial_name']
+        name = config["trial_name"]
         with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
     else:
         session = get_session()
-        report_path = session.storage.trial_fs_path 
-        name = session.storage.trial_fs_path.split('/')[-1]
-    
-    if config['wandb']:
+        report_path = session.storage.trial_fs_path
+        name = session.storage.trial_fs_path.split("/")[-1]
+
+    if config["wandb"]:
         wandb.init(
-            project='cleanqrl',
+            project="cleanqrl",
             sync_tensorboard=True,
             config=config,
             name=name,
             monitor_gym=True,
             save_code=True,
-            dir=report_path
+            dir=report_path,
         )
 
     # TRY NOT TO MODIFY: seeding
     if config["seed"] is None:
-        seed = np.random.randint(0,1e9)
+        seed = np.random.randint(0, 1e9)
     else:
         seed = config["seed"]
 
@@ -126,7 +140,9 @@ def ddpg_classical(config: dict):
 
     # env setup
     envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
-    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    assert isinstance(
+        envs.single_action_space, gym.spaces.Box
+    ), "only continuous action space is supported"
 
     actor = Actor(envs).to(device)
     qf1 = QNetwork(envs).to(device)
@@ -154,12 +170,18 @@ def ddpg_classical(config: dict):
     for global_step in range(total_timesteps):
         # ALGO LOGIC: put action logic here
         if global_step < learning_starts:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array(
+                [envs.single_action_space.sample() for _ in range(envs.num_envs)]
+            )
         else:
             with torch.no_grad():
                 actions = actor(torch.Tensor(obs).to(device))
                 actions += torch.normal(0, actor.action_scale * exploration_noise)
-                actions = actions.cpu().numpy().clip(envs.single_action_space.low, envs.single_action_space.high)
+                actions = (
+                    actions.cpu()
+                    .numpy()
+                    .clip(envs.single_action_space.low, envs.single_action_space.high)
+                )
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -169,18 +191,23 @@ def ddpg_classical(config: dict):
             for idx, finished in enumerate(infos["_episode"]):
                 if finished:
                     metrics = {}
-                    global_episodes +=1
-                    episode_returns.append(infos['episode']['r'].tolist()[idx])
-                    metrics['episode_reward'] = infos['episode']['r'].tolist()[idx]
-                    metrics['episode_length'] = infos['episode']['l'].tolist()[idx]
-                    metrics['global_step'] = global_step
+                    global_episodes += 1
+                    episode_returns.append(infos["episode"]["r"].tolist()[idx])
+                    metrics["episode_reward"] = infos["episode"]["r"].tolist()[idx]
+                    metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
+                    metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
             if global_episodes % 10 == 0 and not ray.is_initialized():
-                print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-1:]))
+                print(
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns[-1:]),
+                )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
-        #for idx, trunc in enumerate(truncations):
+        # for idx, trunc in enumerate(truncations):
         #    if trunc:
         #        real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
@@ -194,7 +221,9 @@ def ddpg_classical(config: dict):
             with torch.no_grad():
                 next_state_actions = target_actor(data.next_observations)
                 qf1_next_target = qf1_target(data.next_observations, next_state_actions)
-                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * gamma * (qf1_next_target).view(-1)
+                next_q_value = data.rewards.flatten() + (
+                    1 - data.dones.flatten()
+                ) * gamma * (qf1_next_target).view(-1)
 
             qf1_a_values = qf1(data.observations, data.actions).view(-1)
             qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
@@ -211,51 +240,60 @@ def ddpg_classical(config: dict):
                 actor_optimizer.step()
 
                 # update the target network
-                for param, target_param in zip(actor.parameters(), target_actor.parameters()):
-                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-                for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
-                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                for param, target_param in zip(
+                    actor.parameters(), target_actor.parameters()
+                ):
+                    target_param.data.copy_(
+                        tau * param.data + (1 - tau) * target_param.data
+                    )
+                for param, target_param in zip(
+                    qf1.parameters(), qf1_target.parameters()
+                ):
+                    target_param.data.copy_(
+                        tau * param.data + (1 - tau) * target_param.data
+                    )
 
             if global_step % 100 == 0:
                 metrics = {}
-                metrics['qf1_values'] = qf1_a_values.mean().item()
-                metrics['qf1_loss'] = qf1_loss.item()
-                metrics['actor_loss'] = actor_loss.item()
-                metrics['SPS'] = int(global_step / (time.time() - start_time))
+                metrics["qf1_values"] = qf1_a_values.mean().item()
+                metrics["qf1_loss"] = qf1_loss.item()
+                metrics["actor_loss"] = actor_loss.item()
+                metrics["SPS"] = int(global_step / (time.time() - start_time))
                 log_metrics(config, metrics, report_path)
 
-    if config['save_model']:
+    if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
         torch.save(actor.state_dict(), model_path)
         torch.save(qf1.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
     envs.close()
-    if config['wandb']:
+    if config["wandb"]:
         wandb.finish()
 
 
 if __name__ == "__main__":
+
     @dataclass
     class Config:
-        trial_name: str = 'dqn_classical'  # Name of the trial
-        trial_path: str = 'logs'  # Path to save logs relative to the parent directory
-        wandb: bool = True # Use wandb to log experiment data
+        trial_name: str = "dqn_classical"  # Name of the trial
+        trial_path: str = "logs"  # Path to save logs relative to the parent directory
+        wandb: bool = True  # Use wandb to log experiment data
 
         # Environment parameters
-        env_id: str = "MountainCarContinuous-v0" # Environment ID
+        env_id: str = "MountainCarContinuous-v0"  # Environment ID
 
         num_envs: int = 1  # Number of environments
-        seed: int = None # Seed for reproducibility
-        cuda: bool = True # Cuda enabled
+        seed: int = None  # Seed for reproducibility
+        cuda: bool = True  # Cuda enabled
 
         total_timesteps: int = 100000  # Total number of timesteps
-        buffer_size: int = int(1e6) # Replay buffer size
-        learning_rate: float = 3e-4 # Learning rate
-        gamma: float = 0.99 # Discount factor
-        tau: float = 0.005 # Target network update rate
-        batch_size: int = 256 # Batch size
-        exploration_noise: float = 0.1 # Std of Gaussian exploration noise
-        learning_starts: int = 25e3 # Timesteps before learning starts
-        policy_frequency: int = 2 # Frequency of policy updates
-        noise_clip: float = 0.5 # Noise clip
+        buffer_size: int = int(1e6)  # Replay buffer size
+        learning_rate: float = 3e-4  # Learning rate
+        gamma: float = 0.99  # Discount factor
+        tau: float = 0.005  # Target network update rate
+        batch_size: int = 256  # Batch size
+        exploration_noise: float = 0.1  # Std of Gaussian exploration noise
+        learning_starts: int = 25e3  # Timesteps before learning starts
+        policy_frequency: int = 2  # Frequency of policy updates
+        noise_clip: float = 0.5  # Noise clip

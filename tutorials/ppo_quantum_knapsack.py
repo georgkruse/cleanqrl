@@ -1,33 +1,35 @@
 # This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
-import os
-import ray
 import json
+import os
 import time
-import wandb
-import yaml
-import sympy as sp
+from dataclasses import dataclass
 from datetime import datetime
+
 import gymnasium as gym
 import numpy as np
+import pennylane as qml
+import ray
+import sympy as sp
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from dataclasses import dataclass
-from torch.distributions.categorical import Categorical
+import wandb
+import yaml
 from ray.train._internal.session import get_session
-import pennylane as qml
+from torch.distributions.categorical import Categorical
 from wrapper import create_jumanji_env
+
 
 def make_env(env_id, config):
     def thunk():
         env = create_jumanji_env(env_id, config)
-        
+
         return env
 
     return thunk
 
 
-def knapsack_formulate_qubo_unbalanced(weights, values, max_weight, lambdas = None):
+def knapsack_formulate_qubo_unbalanced(weights, values, max_weight, lambdas=None):
     """
     Formulates the QUBO with the unbalanced penalization method.
     This means the QUBO does not use additional slack variables.
@@ -46,7 +48,9 @@ def knapsack_formulate_qubo_unbalanced(weights, values, max_weight, lambdas = No
         constraint += x[i] * weights[i]
 
     H_constraint = max_weight - constraint
-    H_constraint_taylor = 1 - lambdas[0] * H_constraint + 0.5 * lambdas[1] * H_constraint**2
+    H_constraint_taylor = (
+        1 - lambdas[0] * H_constraint + 0.5 * lambdas[1] * H_constraint**2
+    )
     H_total = cost + H_constraint_taylor
     H_total = H_total.expand()
     H_total = sp.simplify(H_total)
@@ -106,30 +110,37 @@ def knapsack_convert_QUBO_to_ising(offset, Q):
             # Update the offset based on the interaction strength between qubits i and j
             offset += Q[i, j] / 4
     J = np.stack(J)
-    J = np.expand_dims(J, axis=0)        # Return the magnetic fields, pairwise interactions, and the updated offset
-    h = np.expand_dims(h, axis=0)        # Return the magnetic fields, pairwise interactions, and the updated offset
+    J = np.expand_dims(
+        J, axis=0
+    )  # Return the magnetic fields, pairwise interactions, and the updated offset
+    h = np.expand_dims(
+        h, axis=0
+    )  # Return the magnetic fields, pairwise interactions, and the updated offset
     return offset, h, J
+
 
 def knapsack_state_converter(state, envs):
     state = state[0]
     num_items = envs.envs[0].unwrapped.num_items
     total_budget = envs.envs[0].unwrapped.total_budget
-    values = state[num_items*2:num_items*3]
+    values = state[num_items * 2 : num_items * 3]
     weights = state[-num_items:]
 
     offset, QUBO = knapsack_formulate_qubo_unbalanced(weights, values, total_budget)
     offset, h, J = knapsack_convert_QUBO_to_ising(offset, QUBO)
-    
-    return offset, h, J        
+
+    return offset, h, J
 
 
-def cost_hamiltonian_ansatz(h, J, input_scaling, weights, wires, layers, num_actions, agent_type):
+def cost_hamiltonian_ansatz(
+    h, J, input_scaling, weights, wires, layers, num_actions, agent_type
+):
     # wmax = max(
     #     np.max(np.abs(list(h.values()))), np.max(np.abs(list(h.values())))
     # )  # Normalizing the Hamiltonian is a good idea
     tensor_h = torch.from_numpy(h)
-    indices_J = J[0,:,:2].astype(np.int16)
-    tensor_J = torch.from_numpy(J[:,:,2])
+    indices_J = J[0, :, :2].astype(np.int16)
+    tensor_J = torch.from_numpy(J[:, :, 2])
     # Apply the initial layer of Hadamard gates to all qubits
     for i in wires:
         qml.Hadamard(wires=i)
@@ -137,21 +148,21 @@ def cost_hamiltonian_ansatz(h, J, input_scaling, weights, wires, layers, num_act
     for layer in range(layers):
         # ---------- COST HAMILTONIAN ----------
         for idx in wires:  # single-qubit terms
-            qml.RZ(input_scaling[layer] * tensor_h[:,idx], wires=idx)
+            qml.RZ(input_scaling[layer] * tensor_h[:, idx], wires=idx)
 
-        for idx in range(J.shape[1]): 
-            qml.CNOT(wires=[indices_J[idx,0], indices_J[idx,1]])
-            qml.RZ(input_scaling[layer] * tensor_J[:,idx], wires=indices_J[idx,1])
-            qml.CNOT(wires=[indices_J[idx,0], indices_J[idx,1]])
+        for idx in range(J.shape[1]):
+            qml.CNOT(wires=[indices_J[idx, 0], indices_J[idx, 1]])
+            qml.RZ(input_scaling[layer] * tensor_J[:, idx], wires=indices_J[idx, 1])
+            qml.CNOT(wires=[indices_J[idx, 0], indices_J[idx, 1]])
         # ---------- MIXER HAMILTONIAN ----------
         for i in wires:
             qml.RX(weights[layer], wires=i)
 
-    if agent_type == 'actor':
-        return [qml.expval(qml.PauliZ(i)) for i in range(num_actions)] 
-    elif agent_type == 'critic':
+    if agent_type == "actor":
+        return [qml.expval(qml.PauliZ(i)) for i in range(num_actions)]
+    elif agent_type == "critic":
         return [qml.expval(qml.PauliZ(0))]
-    
+
 
 class PPOAgentQuantumJumanji(nn.Module):
     def __init__(self, envs, config):
@@ -164,38 +175,86 @@ class PPOAgentQuantumJumanji(nn.Module):
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
-        # input and output scaling are always initialized as ones      
-        self.input_scaling_critic = nn.Parameter(torch.ones(self.num_layers,), requires_grad=True)
+        # input and output scaling are always initialized as ones
+        self.input_scaling_critic = nn.Parameter(
+            torch.ones(
+                self.num_layers,
+            ),
+            requires_grad=True,
+        )
         self.output_scaling_critic = nn.Parameter(torch.tensor(1.0), requires_grad=True)
         # trainable weights are initialized randomly between -pi and pi
-        self.weights_critic = nn.Parameter(torch.rand(self.num_layers,)*2*torch.pi-torch.pi, requires_grad=True)
-        
-        # input and output scaling are always initialized as ones      
-        self.input_scaling_actor = nn.Parameter(torch.ones(self.num_layers,), requires_grad=True)
-        self.output_scaling_actor = nn.Parameter(torch.ones(self.num_actions), requires_grad=True)
+        self.weights_critic = nn.Parameter(
+            torch.rand(
+                self.num_layers,
+            )
+            * 2
+            * torch.pi
+            - torch.pi,
+            requires_grad=True,
+        )
+
+        # input and output scaling are always initialized as ones
+        self.input_scaling_actor = nn.Parameter(
+            torch.ones(
+                self.num_layers,
+            ),
+            requires_grad=True,
+        )
+        self.output_scaling_actor = nn.Parameter(
+            torch.ones(self.num_actions), requires_grad=True
+        )
         # trainable weights are initialized randomly between -pi and pi
-        self.weights_actor = nn.Parameter(torch.rand(self.num_layers,)*2*torch.pi-torch.pi, requires_grad=True)
-        
-        device = qml.device(config["device"], wires = self.wires)
-        self.quantum_circuit = qml.QNode(cost_hamiltonian_ansatz, device, diff_method = config["diff_method"], interface = "torch")
-        
-        # We will need to add an additional converter for the state 
+        self.weights_actor = nn.Parameter(
+            torch.rand(
+                self.num_layers,
+            )
+            * 2
+            * torch.pi
+            - torch.pi,
+            requires_grad=True,
+        )
+
+        device = qml.device(config["device"], wires=self.wires)
+        self.quantum_circuit = qml.QNode(
+            cost_hamiltonian_ansatz,
+            device,
+            diff_method=config["diff_method"],
+            interface="torch",
+        )
+
+        # We will need to add an additional converter for the state
         self.state_converter = knapsack_state_converter
 
     def get_value(self, x):
         offset, h, J = self.state_converter(x, self.envs)
-        value = self.quantum_circuit(h, J, self.input_scaling_critic, self.weights_critic, 
-                                     self.wires, self.num_layers, self.num_actions, 'critic')
-        value = torch.stack(value, dim = 1)
+        value = self.quantum_circuit(
+            h,
+            J,
+            self.input_scaling_critic,
+            self.weights_critic,
+            self.wires,
+            self.num_layers,
+            self.num_actions,
+            "critic",
+        )
+        value = torch.stack(value, dim=1)
         value = value * self.output_scaling_critic
         return value
 
-
     def get_action_and_value(self, x, action=None):
         offset, h, J = self.state_converter(x, self.envs)
-        logits = self.quantum_circuit(h, J, self.input_scaling_actor, self.weights_actor, 
-                                      self.wires, self.num_layers, self.num_actions, 'actor')
-        logits = torch.stack(logits, dim = 1)
+        logits = self.quantum_circuit(
+            h,
+            J,
+            self.input_scaling_actor,
+            self.weights_actor,
+            self.wires,
+            self.num_layers,
+            self.num_actions,
+            "actor",
+        )
+        logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling_actor
         probs = Categorical(logits=logits)
         if action is None:
@@ -204,15 +263,15 @@ class PPOAgentQuantumJumanji(nn.Module):
 
 
 def log_metrics(config, metrics, report_path=None):
-    if config['wandb']:
+    if config["wandb"]:
         wandb.log(metrics)
     if ray.is_initialized():
         ray.train.report(metrics=metrics)
     else:
-        with open(os.path.join(report_path, 'result.json'), "a") as f:
+        with open(os.path.join(report_path, "result.json"), "a") as f:
             json.dump(metrics, f)
             f.write("\n")
-    
+
 
 def ppo_quantum_jumanji(config):
     num_envs = config["num_envs"]
@@ -243,26 +302,26 @@ def ppo_quantum_jumanji(config):
     batch_size = int(num_envs * num_steps)
     minibatch_size = int(batch_size // num_minibatches)
     num_iterations = total_timesteps // batch_size
-    
+
     if not ray.is_initialized():
         report_path = config["path"]
-        name = config['trial_name']
+        name = config["trial_name"]
         with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
     else:
         session = get_session()
-        report_path = session.storage.trial_fs_path 
-        name = session.storage.trial_fs_path.split('/')[-1] 
-    
-    if config['wandb']:
+        report_path = session.storage.trial_fs_path
+        name = session.storage.trial_fs_path.split("/")[-1]
+
+    if config["wandb"]:
         wandb.init(
-            project='cleanqrl',
+            project="cleanqrl",
             sync_tensorboard=True,
             config=config,
             name=name,
             monitor_gym=True,
             save_code=True,
-            dir=report_path
+            dir=report_path,
         )
 
     # TRY NOT TO MODIFY: seeding
@@ -270,7 +329,7 @@ def ppo_quantum_jumanji(config):
     #     random.seed(seed)
     #     np.random.seed(seed)
     #     torch.manual_seed(seed)
-    seed = np.random.randint(0,1e9)
+    seed = np.random.randint(0, 1e9)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
     # assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
@@ -278,20 +337,30 @@ def ppo_quantum_jumanji(config):
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, config) for i in range(num_envs)],
     )
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(
+        envs.single_action_space, gym.spaces.Discrete
+    ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantumJumanji(envs, config).to(device)  # This is what I need to change to fit quantum into the picture
-    optimizer = optim.Adam([
-        {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
-        {"params": agent.output_scaling_actor, "lr": lr_output_scaling},
-        {"params": agent.weights_actor, "lr": lr_weights},
-        {"params": agent.input_scaling_critic, "lr": lr_input_scaling},
-        {"params": agent.output_scaling_critic, "lr": lr_output_scaling},
-        {"params": agent.weights_critic, "lr": lr_weights}
-    ])   
+    agent = PPOAgentQuantumJumanji(envs, config).to(
+        device
+    )  # This is what I need to change to fit quantum into the picture
+    optimizer = optim.Adam(
+        [
+            {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
+            {"params": agent.output_scaling_actor, "lr": lr_output_scaling},
+            {"params": agent.weights_actor, "lr": lr_weights},
+            {"params": agent.input_scaling_critic, "lr": lr_input_scaling},
+            {"params": agent.output_scaling_critic, "lr": lr_output_scaling},
+            {"params": agent.weights_critic, "lr": lr_weights},
+        ]
+    )
 
-    obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((num_steps, num_envs) + envs.single_action_space.shape).to(device)
+    obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(
+        device
+    )
+    actions = torch.zeros((num_steps, num_envs) + envs.single_action_space.shape).to(
+        device
+    )
     logprobs = torch.zeros((num_steps, num_envs)).to(device)
     rewards = torch.zeros((num_steps, num_envs)).to(device)
     dones = torch.zeros((num_steps, num_envs)).to(device)
@@ -310,7 +379,7 @@ def ppo_quantum_jumanji(config):
         # Annealing the rate if instructed to do so.
         if anneal_lr:
             for idx, param_group in enumerate(optimizer.param_groups):
-                previous_lr = param_group['lr']
+                previous_lr = param_group["lr"]
                 frac = 1.0 - (iteration - 1.0) / num_iterations
                 lrnow = frac * previous_lr
                 optimizer.param_groups[idx]["lr"] = lrnow
@@ -328,10 +397,14 @@ def ppo_quantum_jumanji(config):
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            next_obs, reward, terminations, truncations, infos = envs.step(
+                action.cpu().numpy()
+            )
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
+            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(
+                next_done
+            ).to(device)
 
             # If the episode is finished, report the metrics
             # Here addtional logging can be added
@@ -339,22 +412,26 @@ def ppo_quantum_jumanji(config):
                 for idx, finished in enumerate(infos["_episode"]):
                     if finished:
                         metrics = {}
-                        global_episodes +=1
-                        episode_returns.append(infos['episode']['r'].tolist()[idx])
-                        metrics['episode_reward'] = infos['episode']['r'].tolist()[idx]
-                        metrics['episode_length'] = infos['episode']['l'].tolist()[idx]
-                        metrics['global_step'] = global_step
-                        if 'approximation_ratio' in infos.keys():
-                            metrics['approximation_ratio'] = infos['approximation_ratio'][idx]
-                            episode_approximation_ratio.append(metrics['approximation_ratio'])
+                        global_episodes += 1
+                        episode_returns.append(infos["episode"]["r"].tolist()[idx])
+                        metrics["episode_reward"] = infos["episode"]["r"].tolist()[idx]
+                        metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
+                        metrics["global_step"] = global_step
+                        if "approximation_ratio" in infos.keys():
+                            metrics["approximation_ratio"] = infos[
+                                "approximation_ratio"
+                            ][idx]
+                            episode_approximation_ratio.append(
+                                metrics["approximation_ratio"]
+                            )
                         log_metrics(config, metrics, report_path)
-                        
+
                 if global_episodes % 10 == 0 and not ray.is_initialized():
-                    logging_info = f'Global step: {global_step}  Mean return: {np.mean(episode_returns[-10:])}'
-                    if 'approximation_ratio' in infos.keys():
-                        logging_info += f'  Mean approximation ratio: {np.mean(episode_approximation_ratio[-10:])}'
+                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns[-10:])}"
+                    if "approximation_ratio" in infos.keys():
+                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio[-10:])}"
                     print(logging_info)
-                       
+
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
@@ -368,7 +445,9 @@ def ppo_quantum_jumanji(config):
                     nextnonterminal = 1.0 - dones[t + 1]
                     nextvalues = values[t + 1]
                 delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
+                advantages[t] = lastgaelam = (
+                    delta + gamma * gae_lambda * nextnonterminal * lastgaelam
+                )
             returns = advantages + values
 
         # flatten the batch
@@ -388,7 +467,9 @@ def ppo_quantum_jumanji(config):
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(
+                    b_obs[mb_inds], b_actions.long()[mb_inds]
+                )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -396,15 +477,21 @@ def ppo_quantum_jumanji(config):
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > clip_coef).float().mean().item()]
+                    clipfracs += [
+                        ((ratio - 1.0).abs() > clip_coef).float().mean().item()
+                    ]
 
                 mb_advantages = b_advantages[mb_inds]
                 if norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (
+                        mb_advantages.std() + 1e-8
+                    )
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
+                pg_loss2 = -mb_advantages * torch.clamp(
+                    ratio, 1 - clip_coef, 1 + clip_coef
+                )
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
@@ -445,72 +532,77 @@ def ppo_quantum_jumanji(config):
         metrics["value_loss"] = v_loss.item()
         metrics["policy_loss"] = pg_loss.item()
         metrics["entropy"] = entropy_loss.item()
-        metrics["old_approx_kl"] =  old_approx_kl.item()
+        metrics["old_approx_kl"] = old_approx_kl.item()
         metrics["approx_kl"] = approx_kl.item()
         metrics["clipfrac"] = np.mean(clipfracs)
         metrics["explained_variance"] = np.mean(explained_var)
         metrics["SPS"] = int(global_step / (time.time() - start_time))
         log_metrics(config, metrics, report_path)
-        
-    if config['save_model']:
+
+    if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
     envs.close()
-    if config['wandb']:
+    if config["wandb"]:
         wandb.finish()
 
+
 if __name__ == "__main__":
-    
+
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = 'ppo_quantum_knapsack'  # Name of the trial
-        trial_path: str = 'logs'  # Path to save logs relative to the parent directory
-        wandb: bool = False # Use wandb to log experiment data 
+        trial_name: str = "ppo_quantum_knapsack"  # Name of the trial
+        trial_path: str = "logs"  # Path to save logs relative to the parent directory
+        wandb: bool = False  # Use wandb to log experiment data
 
         # Environment parameters
-        env_id: str = "Knapsack-v1" # Environment ID
+        env_id: str = "Knapsack-v1"  # Environment ID
         num_items: int = 3
         total_budget: int = 1.5
 
         # Algorithm parameters
-        total_timesteps: int = 100000 # Total timesteps for the experiment
-        num_envs: int = 1 # Number of parallel environments
-        num_steps: int = 512 # Steps per environment per policy rollout
-        anneal_lr: bool = True # Toggle for learning rate annealing
+        total_timesteps: int = 100000  # Total timesteps for the experiment
+        num_envs: int = 1  # Number of parallel environments
+        num_steps: int = 512  # Steps per environment per policy rollout
+        anneal_lr: bool = True  # Toggle for learning rate annealing
         lr_input_scaling: float = 0.01  # Learning rate for input scaling
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
-        gamma: float = 0.99 # Discount factor gamma
-        gae_lambda: float = 0.95 # Lambda for general advantage estimation
-        num_minibatches: int = 32 # Number of mini-batches
-        update_epochs: int = 10 # Number of epochs to update the policy
-        norm_adv: bool = True # Toggle for advantages normalization
-        clip_coef: float = 0.2 # Surrogate clipping coefficient
-        clip_vloss: bool = True # Toggle for clipped value function loss
-        ent_coef: float = 0.0 # Entropy coefficient
-        vf_coef: float = 0.5 # Value function coefficient
-        max_grad_norm: float = 0.5 # Maximum gradient norm for clipping
-        target_kl: float = None # Target KL divergence threshold
+        gamma: float = 0.99  # Discount factor gamma
+        gae_lambda: float = 0.95  # Lambda for general advantage estimation
+        num_minibatches: int = 32  # Number of mini-batches
+        update_epochs: int = 10  # Number of epochs to update the policy
+        norm_adv: bool = True  # Toggle for advantages normalization
+        clip_coef: float = 0.2  # Surrogate clipping coefficient
+        clip_vloss: bool = True  # Toggle for clipped value function loss
+        ent_coef: float = 0.0  # Entropy coefficient
+        vf_coef: float = 0.5  # Value function coefficient
+        max_grad_norm: float = 0.5  # Maximum gradient norm for clipping
+        target_kl: float = None  # Target KL divergence threshold
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 3  # Number of qubits
         num_layers: int = 5  # Number of layers in the quantum circuit
         device: str = "lightning.qubit"  # Quantum device
         diff_method: str = "adjoint"  # Differentiation method
-        save_model: bool = True # Save the model after the run
+        save_model: bool = True  # Save the model after the run
 
     config = vars(Config())
-    
+
     # Based on the current time, create a unique name for the experiment
-    config['trial_name'] = datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config['trial_name']
-    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config['trial_path'], config['trial_name'])
+    config["trial_name"] = (
+        datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
+    )
+    config["path"] = os.path.join(
+        os.path.dirname(os.getcwd()), config["trial_path"], config["trial_name"]
+    )
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated
-    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
-    config_path = os.path.join(config['path'], 'config.yml')
-    with open(config_path, 'w') as file:
+    os.makedirs(os.path.dirname(config["path"] + "/"), exist_ok=True)
+    config_path = os.path.join(config["path"], "config.yml")
+    with open(config_path, "w") as file:
         yaml.dump(config, file)
 
     ppo_quantum_jumanji(config)

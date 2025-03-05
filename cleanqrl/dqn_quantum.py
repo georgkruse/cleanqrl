@@ -1,50 +1,52 @@
 # This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
+import datetime
+import json
 import os
 import random
 import time
-import ray 
-import yaml 
-import datetime
-import json
-import wandb
 from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
+import pennylane as qml
+import ray
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from replay_buffer import ReplayBuffer
+import wandb
+import yaml
 from ray.train._internal.session import get_session
-import pennylane as qml
+from replay_buffer import ReplayBuffer
+
 
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
+
     return thunk
 
 
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
         for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:,i], wires = [wire])
+            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
 
         for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires = [wire])
+            qml.RY(weights[layer, i], wires=[wire])
 
         for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i+len(wires)], wires = [wire])
+            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
 
         if len(wires) == 2:
-            qml.CZ(wires = wires)
+            qml.CZ(wires=wires)
         else:
             for i in range(len(wires)):
-                qml.CZ(wires = [wires[i],wires[(i+1)%len(wires)]])
-                
-    return [qml.expval(qml.PauliZ(wires = wire)) for wire in wires[:num_actions]]
+                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
+
+    return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
 
 
 class DQNAgentQuantum(nn.Module):
@@ -57,34 +59,56 @@ class DQNAgentQuantum(nn.Module):
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
-        # input and output scaling are always initialized as ones      
-        self.input_scaling = nn.Parameter(torch.ones(self.num_layers,self.num_qubits), requires_grad=True)
-        self.output_scaling = nn.Parameter(torch.ones(self.num_actions), requires_grad=True)
+        # input and output scaling are always initialized as ones
+        self.input_scaling = nn.Parameter(
+            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
+        )
+        self.output_scaling = nn.Parameter(
+            torch.ones(self.num_actions), requires_grad=True
+        )
         # trainable weights are initialized randomly between -pi and pi
-        self.weights = nn.Parameter(torch.rand(self.num_layers,self.num_qubits*2)*2*torch.pi-torch.pi, requires_grad=True)
-        
-        device = qml.device(config["device"], wires = self.wires)
-        self.quantum_circuit = qml.QNode(hardware_efficient_ansatz, device, diff_method = config["diff_method"], interface = "torch")
-        
+        self.weights = nn.Parameter(
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            requires_grad=True,
+        )
+
+        device = qml.device(config["device"], wires=self.wires)
+        self.quantum_circuit = qml.QNode(
+            hardware_efficient_ansatz,
+            device,
+            diff_method=config["diff_method"],
+            interface="torch",
+        )
+
     def forward(self, x):
-        logits = self.quantum_circuit(x, self.input_scaling, self.weights, self.wires, self.num_layers, self.num_actions)
-        logits = torch.stack(logits, dim = 1)
-        logits = logits * self.output_scaling    
+        logits = self.quantum_circuit(
+            x,
+            self.input_scaling,
+            self.weights,
+            self.wires,
+            self.num_layers,
+            self.num_actions,
+        )
+        logits = torch.stack(logits, dim=1)
+        logits = logits * self.output_scaling
         return logits
+
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
 
+
 def log_metrics(config, metrics, report_path=None):
-    if config['wandb']:
+    if config["wandb"]:
         wandb.log(metrics)
     if ray.is_initialized():
         ray.train.report(metrics=metrics)
     else:
-        with open(os.path.join(report_path, 'result.json'), "a") as f:
+        with open(os.path.join(report_path, "result.json"), "a") as f:
             json.dump(metrics, f)
             f.write("\n")
+
 
 def dqn_quantum(config: dict):
     cuda = config["cuda"]
@@ -110,27 +134,27 @@ def dqn_quantum(config: dict):
 
     if not ray.is_initialized():
         report_path = config["path"]
-        name = config['trial_name']
+        name = config["trial_name"]
         with open(os.path.join(report_path, "result.json"), "w") as f:
             f.write("")
     else:
         session = get_session()
-        report_path = session.storage.trial_fs_path 
-        name = session.storage.trial_fs_path.split('/')[-1] 
+        report_path = session.storage.trial_fs_path
+        name = session.storage.trial_fs_path.split("/")[-1]
 
-    if config['wandb']:
+    if config["wandb"]:
         wandb.init(
-            project='cleanqrl',
+            project="cleanqrl",
             sync_tensorboard=True,
             config=config,
             name=name,
             monitor_gym=True,
             save_code=True,
-            dir=report_path
+            dir=report_path,
         )
     # TRY NOT TO MODIFY: seeding
     if config["seed"] is None:
-        seed = np.random.randint(0,1e9)
+        seed = np.random.randint(0, 1e9)
     else:
         seed = config["seed"]
 
@@ -140,17 +164,19 @@ def dqn_quantum(config: dict):
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, config) for i in range(num_envs)]
-    )
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
+    assert isinstance(
+        envs.single_action_space, gym.spaces.Discrete
+    ), "only discrete action space is supported"
 
     q_network = DQNAgentQuantum(envs, config).to(device)
-    optimizer = optim.Adam([
-        {"params": q_network.input_scaling, "lr": lr_input_scaling},
-        {"params": q_network.output_scaling, "lr": lr_output_scaling},
-        {"params": q_network.weights, "lr": lr_weights}
-    ])    
+    optimizer = optim.Adam(
+        [
+            {"params": q_network.input_scaling, "lr": lr_input_scaling},
+            {"params": q_network.output_scaling, "lr": lr_output_scaling},
+            {"params": q_network.weights, "lr": lr_weights},
+        ]
+    )
     target_network = DQNAgentQuantum(envs, config).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
@@ -170,9 +196,13 @@ def dqn_quantum(config: dict):
     obs, _ = envs.reset(seed=seed)
     for global_step in range(total_timesteps):
         # ALGO LOGIC: put action logic here
-        epsilon = linear_schedule(start_e, end_e, exploration_fraction * total_timesteps, global_step)
+        epsilon = linear_schedule(
+            start_e, end_e, exploration_fraction * total_timesteps, global_step
+        )
         if random.random() < epsilon:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array(
+                [envs.single_action_space.sample() for _ in range(envs.num_envs)]
+            )
         else:
             q_values = q_network(torch.Tensor(obs).to(device))
             actions = torch.argmax(q_values, dim=1).cpu().numpy()
@@ -185,16 +215,21 @@ def dqn_quantum(config: dict):
             for idx, finished in enumerate(infos["_episode"]):
                 if finished:
                     metrics = {}
-                    global_episodes +=1
-                    episode_returns.append(infos['episode']['r'].tolist()[idx])
-                    metrics['episode_reward'] = infos['episode']['r'].tolist()[idx]
-                    metrics['episode_length'] = infos['episode']['l'].tolist()[idx]
-                    metrics['global_step'] = global_step
+                    global_episodes += 1
+                    episode_returns.append(infos["episode"]["r"].tolist()[idx])
+                    metrics["episode_reward"] = infos["episode"]["r"].tolist()[idx]
+                    metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
+                    metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
-            
+
             if global_episodes % 10 == 0 and not ray.is_initialized():
-                print('Global step: ', global_step, ' Mean return: ', np.mean(episode_returns[-1:]))
-                       
+                print(
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns[-1:]),
+                )
+
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
         # TODO: Check if this is actually important: see issue #10
@@ -212,15 +247,17 @@ def dqn_quantum(config: dict):
                 data = rb.sample(batch_size)
                 with torch.no_grad():
                     target_max, _ = target_network(data.next_observations).max(dim=1)
-                    td_target = data.rewards.flatten() + gamma * target_max * (1 - data.dones.flatten())
+                    td_target = data.rewards.flatten() + gamma * target_max * (
+                        1 - data.dones.flatten()
+                    )
                 old_val = q_network(data.observations).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
                 if global_step % 100 == 0:
                     metrics = {}
-                    metrics['td_loss'] = loss.item()
-                    metrics['q_values'] = old_val.mean().item()
-                    metrics['SPS'] = int(global_step / (time.time() - start_time))
+                    metrics["td_loss"] = loss.item()
+                    metrics["q_values"] = old_val.mean().item()
+                    metrics["SPS"] = int(global_step / (time.time() - start_time))
                     log_metrics(config, metrics, report_path)
                 # optimize the model
                 optimizer.zero_grad()
@@ -229,36 +266,39 @@ def dqn_quantum(config: dict):
 
             # update target network
             if global_step % target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), q_network.parameters()):
+                for target_network_param, q_network_param in zip(
+                    target_network.parameters(), q_network.parameters()
+                ):
                     target_network_param.data.copy_(
-                        tau * q_network_param.data + (1.0 - tau) * target_network_param.data
+                        tau * q_network_param.data
+                        + (1.0 - tau) * target_network_param.data
                     )
 
-    if config['save_model']:
+    if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"
         torch.save(q_network.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
     envs.close()
-    if config['wandb']:
+    if config["wandb"]:
         wandb.finish()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = 'dqn_quantum'  # Name of the trial
-        trial_path: str = 'logs'  # Path to save logs relative to the parent directory
-        wandb: bool = True # Use wandb to log experiment data 
+        trial_name: str = "dqn_quantum"  # Name of the trial
+        trial_path: str = "logs"  # Path to save logs relative to the parent directory
+        wandb: bool = True  # Use wandb to log experiment data
 
         # Environment parameters
-        env_id: str = "CartPole-v1" # Environment ID
-        
+        env_id: str = "CartPole-v1"  # Environment ID
+
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
-        seed: int = None # Seed for reproducibility
+        seed: int = None  # Seed for reproducibility
         buffer_size: int = 10000  # Size of the replay buffer
         total_timesteps: int = 10000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration
@@ -278,20 +318,23 @@ if __name__ == '__main__':
         num_layers: int = 2  # Number of layers in the quantum circuit
         device: str = "default.qubit"  # Quantum device
         diff_method: str = "backprop"  # Differentiation method
-        save_model: bool = True # Save the model after the run
+        save_model: bool = True  # Save the model after the run
 
     config = vars(Config())
 
     # Based on the current time, create a unique name for the experiment
-    config['trial_name'] = datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config['trial_name']
-    config['path'] = os.path.join(os.path.dirname(os.getcwd()), config['trial_path'], config['trial_name'])
+    config["trial_name"] = (
+        datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
+    )
+    config["path"] = os.path.join(
+        os.path.dirname(os.getcwd()), config["trial_path"], config["trial_name"]
+    )
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated
-    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
-    config_path = os.path.join(config['path'], 'config.yml')
-    with open(config_path, 'w') as file:
+    os.makedirs(os.path.dirname(config["path"] + "/"), exist_ok=True)
+    config_path = os.path.join(config["path"], "config.yml")
+    with open(config_path, "w") as file:
         yaml.dump(config, file)
 
-    # Start the agent training 
-    dqn_quantum(config)    
-
+    # Start the agent training
+    dqn_quantum(config)

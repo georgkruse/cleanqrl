@@ -1,20 +1,23 @@
-from ray.tune import choice, uniform, grid_search, loguniform
+from ray.tune import choice, grid_search, loguniform, uniform
 
-switch = {'choice': choice, 
-          'uniform': uniform, 
-          'grid_search': grid_search, 
-          'loguniform': loguniform}
+switch = {
+    "choice": choice,
+    "uniform": uniform,
+    "grid_search": grid_search,
+    "loguniform": loguniform,
+}
+
 
 def add_hyperparameters(conf):
     for key, _ in conf.items():
         if isinstance(conf[key], list):
             if len(conf[key]) > 0 and not isinstance(conf[key][0], list):
                 if conf[key][0] in switch:
-                    if conf[key][1] == 'int':
+                    if conf[key][1] == "int":
                         interval = [int(param) for param in conf[key][2]]
-                    elif conf[key][1] == 'float':
+                    elif conf[key][1] == "float":
                         interval = [float(param) for param in conf[key][2]]
-                    elif conf[key][1] in ['str', 'string']:
+                    elif conf[key][1] in ["str", "string"]:
                         interval = [str(param) for param in conf[key][2]]
                     else:
                         interval = conf[key][2]
@@ -24,6 +27,7 @@ def add_hyperparameters(conf):
         elif isinstance(conf[key], dict):
             add_hyperparameters(conf[key])
     return conf
+
 
 def nested_copy(src, target):
     if isinstance(target, dict):
@@ -43,29 +47,42 @@ def extract_hyperparameters(conf):
         if isinstance(conf[key], list):
             if len(conf[key]) > 0 and not isinstance(conf[key][0], list):
                 if conf[key][0] in switch:
-                    if conf[key][1] == 'int':
+                    if conf[key][1] == "int":
                         interval = [int(param) for param in conf[key][2]]
-                    elif conf[key][1] == 'float':
+                    elif conf[key][1] == "float":
                         interval = [float(param) for param in conf[key][2]]
-                    elif conf[key][1] in ['str', 'string']:
+                    elif conf[key][1] in ["str", "string"]:
                         interval = [str(param) for param in conf[key][2]]
-                    elif conf[key][1] == 'list(int)':
-                        interval = ['_'.join(int(p) for p in param) for param in conf[key][2]]
-                    elif conf[key][1] == 'list(float)':
-                        interval = ['_'.join(str(p) for p in param).replace('.', '_') for param in conf[key][2]]
-                    elif conf[key][1] == 'list(list)':
+                    elif conf[key][1] == "list(int)":
+                        interval = [
+                            "_".join(int(p) for p in param) for param in conf[key][2]
+                        ]
+                    elif conf[key][1] == "list(float)":
+                        interval = [
+                            "_".join(str(p) for p in param).replace(".", "_")
+                            for param in conf[key][2]
+                        ]
+                    elif conf[key][1] == "list(list)":
                         # interval = [[str(p) for p in param] for param in conf[key][2]]
                         # Added for hyperparameter tuning with schedules
                         interval = [str(param) for param in conf[key][2]]
-                        interval = [x.replace('[[', '').replace(']]', '').replace('],', '').replace(' [', '_').replace(', ', '_').replace('.', '_') for x in interval]
+                        interval = [
+                            x.replace("[[", "")
+                            .replace("]]", "")
+                            .replace("],", "")
+                            .replace(" [", "_")
+                            .replace(", ", "_")
+                            .replace(".", "_")
+                            for x in interval
+                        ]
                     else:
                         interval = conf[key][2]
-                    
+
                     hyperparameters.append(interval)
                     key_names.append(key)
                     for element in interval:
                         single_elements.append([key, element])
         elif isinstance(conf[key], dict):
-            add_hyperparameters(conf[key])  
+            add_hyperparameters(conf[key])
 
     return key_names, hyperparameters, single_elements
