@@ -19,6 +19,7 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.normal import Normal
+from cleanqrl.wrapper import ArctanNormalizationWrapper
 
 
 def make_env(env_id, config):
@@ -31,6 +32,8 @@ def make_env(env_id, config):
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.NormalizeObservation(env)
+        if config["env_wrapper"] == "arctan":
+            env = ArctanNormalizationWrapper(env)
         # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
         env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
@@ -43,8 +46,8 @@ def hardware_efficient_ansatz(
     x, input_scaling, weights, wires, layers, num_actions, agent_type
 ):
     for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+        for i, feature in enumerate(x.T):
+            qml.RX(input_scaling[layer, i] * feature, wires=[i])
 
         for i, wire in enumerate(wires):
             qml.RY(weights[layer, i], wires=[wire])
@@ -459,6 +462,7 @@ if __name__ == "__main__":
         env_id: str = "Pendulum-v1"  # Environment ID
 
         # Algorithm parameters
+        env_wrapper: str = "arctan"  # Environment wrapper
         total_timesteps: int = 1000000  # Total timesteps for the experiment
         learning_rate: float = 3e-4  # Learning rate of the optimizer
         num_envs: int = 1  # Number of parallel environments

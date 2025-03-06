@@ -22,12 +22,14 @@ import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
 from wrapper import ReplayBufferWrapper
-
+from cleanqrl.wrapper import ArctanNormalizationWrapper
 
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        if config["env_wrapper"] == "arctan":
+            env = ArctanNormalizationWrapper(env)
         env = ReplayBufferWrapper(env)
         
         return env
@@ -37,8 +39,8 @@ def make_env(env_id, config):
 
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+        for i, feature in enumerate(x.T):
+            qml.RX(input_scaling[layer, i] * feature, wires=[i])
 
         for i, wire in enumerate(wires):
             qml.RY(weights[layer, i], wires=[wire])
@@ -314,6 +316,7 @@ if __name__ == "__main__":
         env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
+        env_wrapper: str = "arctan"  # Environment wrapper
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
         buffer_size: int = 10000  # Size of the replay buffer

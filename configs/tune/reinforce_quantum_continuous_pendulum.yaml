@@ -5,10 +5,10 @@ wandb:                  True
 
 # ray tune parameters
 ray_local_mode:         False
-num_cpus:               4
+num_cpus:               12
 num_gpus:               0
 ray_num_trial_samples:  3
-cpus_per_worker:        3
+cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
@@ -16,10 +16,17 @@ env_id:   Pendulum-v1
 
 # algorithm parameters
 env_wrapper:        arctan
+seed:               None
 agent:              REINFORCE_quantum_continuous
-total_timesteps:    1000
-lr_input_scaling:   0.001    
-lr_weights:   0.001    
+total_timesteps:    200000
+lr_input_scaling:   #0.025
+  - grid_search
+  - float
+  - [0.01, 0.0025]  
+lr_weights:         #0.025
+  - grid_search
+  - float
+  - [0.01, 0.0025]     
 lr_output_scaling:   0.1    
 num_envs:           1
 gamma:              0.9

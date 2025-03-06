@@ -50,8 +50,9 @@ if __name__ == "__main__":
             return trial.__str__() + "_" + trial.experiment_tag
 
         # We will use the tune.Tuner class to run multiple agents in parallel
+        trainable = tune.with_resources(train_agent, resources={"cpu" : config["cpus_per_worker"], "gpu": config["gpus_per_worker"]})
         tuner = tune.Tuner(
-            train_agent,
+            trainable,
             param_space=config,
             run_config=tune.RunConfig(storage_path=config["path"]),
             tune_config=tune.TuneConfig(

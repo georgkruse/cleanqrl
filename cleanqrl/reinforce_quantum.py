@@ -18,12 +18,15 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
+from cleanqrl.wrapper import ArctanNormalizationWrapper
 
 
 def make_env(env_id, config=None):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        if config["env_wrapper"] == "arctan":
+            env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk
@@ -31,8 +34,8 @@ def make_env(env_id, config=None):
 
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+        for i, feature in enumerate(x.T):
+            qml.RX(input_scaling[layer, i] * feature, wires=[i])
 
         for i, wire in enumerate(wires):
             qml.RY(weights[layer, i], wires=[wire])
@@ -165,7 +168,7 @@ def reinforce_quantum(config):
     ), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for _ in range(num_envs)],
+        [make_env(env_id, config) for _ in range(num_envs)],
     )
 
     assert isinstance(
@@ -281,6 +284,7 @@ if __name__ == "__main__":
         env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
+        env_wrapper: str = "arctan"  # Environment wrapper
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
         total_timesteps: int = 100000  # Total number of timesteps

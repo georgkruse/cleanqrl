@@ -1,24 +1,24 @@
 # general parameters
 trial_path:             logs
-trial_name:             ppo_acrobot_classical
+trial_name:             ppo_acrobot
 wandb:                  True
 
 # ray tune parameters
 ray_local_mode:         False
-num_cpus:               10
+num_cpus:               12
 num_gpus:               0
-ray_num_trial_samples:  10
-cpus_per_worker:        3
+ray_num_trial_samples:  3
+cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
 env_id:   Acrobot-v1
 
 # algorithm parameters
-agent:               PPO_classical
+env_wrapper:        arctan
+agent:               PPO_quantum
 total_timesteps:    200000
-learning_rate:      0.001
-num_envs:           2
+num_envs:           5
 seed:               None
 num_steps:          128
 anneal_lr:          True
@@ -33,8 +33,24 @@ ent_coef:           0.01
 vf_coef:            0.5
 max_grad_norm:      0.5
 target_kl:          None
-cuda: False
-save_model: True
-wandb: True
 
+lr_input_scaling:   #0.025
+  - grid_search
+  - float
+  - [0.01, 0.025]  
+lr_weights:         #0.025
+  - grid_search
+  - float
+  - [0.01, 0.025]  
+lr_output_scaling:   0.1
+num_qubits:         6
+num_layers:         5
+ansatz:             hea
+init_method:        uniform
+observables:        global
+device:             lightning.qubit
+diff_method:        adjoint
+
+
+cuda: False
 
