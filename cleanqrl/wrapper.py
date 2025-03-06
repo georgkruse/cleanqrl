@@ -149,6 +149,12 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
 
 
 class JumanjiWrapperMaze(gym.Wrapper):
+    def __init__(self, env, config):
+        super().__init__(env)
+        self.constant_maze = config.get("constant_maze", False)
+        self.seed = config.get("seed", 42)
+        self.episodes = 0
+
     def reset(self, **kwargs):
         if self.constant_maze:
             output = self.env.reset(seed=self.seed)
@@ -209,14 +215,17 @@ def create_jumanji_env(env_id, config):
     elif env_id == "Maze-v0":
         num_rows = config.get("num_rows", 4)
         num_cols = config.get("num_cols", 4)
-        constant_maze = config.get("constant_maze", False)
         generator_maze = RandomGeneratorMaze(num_cols=num_cols, num_rows=num_rows)
         env = Maze(generator=generator_maze)
+    else:
+        try:
+            env = jumanji.make(env_id)
+        except:
+            raise KeyError(f"Jumanji does not have the env '{env_id}'.")
+        print(f"WARNING: A custom wrapper for '{env_id}' is not implemented. This might lead to unexepected behaviour. See the tutorials for examples.")
 
     env = jumanji.wrappers.JumanjiToGymWrapper(env)
-    env = gym.wrappers.FlattenObservation(
-        env
-    )  # deal with dm_control's Dict observation space
+    env = gym.wrappers.FlattenObservation(env)
     env = gym.wrappers.RecordEpisodeStatistics(env)
 
     if env_id == "TSP-v1":
@@ -224,7 +233,6 @@ def create_jumanji_env(env_id, config):
     elif env_id == "Knapsack-v1":
         env = JumanjiWrapperKnapsack(env)
     elif env_id == "Maze-v0":
-        env = JumanjiWrapperMaze(env)
-        env.constant_maze = constant_maze
-        env.seed = config.get("seed", 42)
+        env = JumanjiWrapperMaze(env, config)
+
     return env

@@ -68,15 +68,15 @@ class PPOAgentQuantumContinuous(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.num_features = np.array(envs.single_observation_space.shape).prod()
+        self.observation_size = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = np.prod(envs.single_action_space.shape)
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
         assert (
-            self.num_qubits >= self.num_features
-        ), "Number of qubits must be greater than or equal to the number of features"
+            self.num_qubits >= self.observation_size
+        ), "Number of qubits must be greater than or equal to the observation size"
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"

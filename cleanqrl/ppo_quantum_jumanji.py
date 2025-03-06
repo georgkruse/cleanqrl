@@ -73,15 +73,12 @@ class PPOAgentQuantumJumanji(nn.Module):
         super().__init__()
         self.config = config
         self.envs = envs
-        self.num_features = np.array(envs.single_observation_space.shape).prod()
+        self.observation_size = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
-        assert (
-            self.num_qubits >= self.num_features
-        ), "Number of qubits must be greater than or equal to the number of features"
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
@@ -452,6 +449,7 @@ if __name__ == "__main__":
         trial_name: str = "ppo_quantum_jumanji"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "TSP-v1"  # Environment ID
