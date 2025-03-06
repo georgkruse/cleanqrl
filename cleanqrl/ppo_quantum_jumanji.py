@@ -46,8 +46,8 @@ def hardware_efficient_ansatz(
     weights_kp = x[:, -num_actions:]
 
     for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RY(input_scaling[layer, i] * values_kp[:, i], wires=[wire])
+        for i, feature in enumerate(x.T):
+            qml.RX(input_scaling[layer, i] * feature, wires=[i])
 
         for i, wire in enumerate(wires):
             qml.RZ(input_scaling[layer, i] * weights_kp[:, i], wires=[wire])

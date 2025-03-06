@@ -32,8 +32,8 @@ def make_env(env_id, config=None):
 
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+        for i, feature in enumerate(x.T):
+            qml.RX(input_scaling[layer, i] * feature, wires=[i])
 
         for i, wire in enumerate(wires):
             qml.RY(weights[layer, i], wires=[wire])
