@@ -1,135 +1,226 @@
 # This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
 import json
 import os
+import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
 import pennylane as qml
-import ray
 import sympy as sp
+import ray
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
 import yaml
+from  jumanji import wrappers
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
-from wrapper import create_jumanji_env
+from jumanji.environments import Knapsack
+from jumanji.environments.packing.knapsack.generator import RandomGenerator 
+
+
+# We need to create a new wrapper for the Knapsack environment that converts 
+# the observation into a cost hamiltonian of the problem. 
+class JumanjiWrapperKnapsack(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        # For the knapsack problem we use the so called unbalanced penalization method
+        # This means that we will have sum(range(num_items)) quadratic terms + num_items linear terms
+        # This is constant throughout 
+        self.num_items = self.env.unwrapped.num_items
+        self.total_budget = self.env.unwrapped.total_budget
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(sum(range(self.num_items)) + self.num_items + self.num_items,))
+        
+    def reset(self, **kwargs):
+        state, info = self.env.reset()
+        # convert the state to cost hamiltonian
+        offset, QUBO = self.formulate_knapsack_qubo_unbalanced(state['weights'], state['values'], self.total_budget)
+        offset, h, J = self.convert_QUBO_to_ising(offset, QUBO)
+        return state, info
+    
+    def step(self, action):
+        state, reward, terminate, truncate, info = self.env.step(action)
+        if truncate:
+            values = self.previous_state['values']
+            weights = self.previous_state['weights']
+            optimal_value = self.knapsack_optimal_value(weights, values, self.total_budget)
+            info["optimal_value"] = optimal_value
+            info["approximation_ratio"] = info["episode"]["r"] / optimal_value
+            # if info['approximation_ratio'] > 0.9:
+            #     print(info['approximation_ratio'])
+        else:
+            info = dict()
+        self.previous_state = state
+
+        # convert the state to cost hamiltonian
+        offset, QUBO = self.formulate_knapsack_qubo_unbalanced(state['weights'], state['values'], self.total_budget)
+        offset, h, J = self.convert_QUBO_to_ising(offset, QUBO)
+
+        return state, reward, False, truncate, info
+
+    def knapsack_optimal_value(self, weights, values, total_budget, precision=1000):
+        """
+        Solves the knapsack problem with float weights and values between 0 and 1.
+
+        Args:
+            weights: List or array of item weights (floats between 0 and 1)
+            values: List or array of item values (floats between 0 and 1)
+            capacity: Maximum weight capacity of the knapsack (float)
+            precision: Number of discretization steps for weights (default: 1000)
+
+        Returns:
+            The maximum value that can be achieved
+        """
+        # Convert to numpy arrays
+        weights = np.array(weights)
+        values = np.array(values)
+
+        # Validate input
+        if not np.all((0 <= weights) & (weights <= 1)) or not np.all(
+            (0 <= values) & (values <= 1)
+        ):
+            raise ValueError("All weights and values must be between 0 and 1")
+
+        if total_budget < 0:
+            raise ValueError("Capacity must be non-negative")
+
+        n = len(weights)
+        if n == 0:
+            return 0.0
+
+        # Scale weights to integers for dynamic programming
+        scaled_weights = np.round(weights * precision).astype(int)
+        scaled_capacity = int(total_budget * precision)
+
+        # Initialize DP table
+        dp = np.zeros(scaled_capacity + 1)
+
+        # Fill the DP table
+        for i in range(n):
+            # We need to go backward to avoid counting an item multiple times
+            for w in range(scaled_capacity, scaled_weights[i] - 1, -1):
+                dp[w] = max(dp[w], dp[w - scaled_weights[i]] + values[i])
+
+        return float(dp[scaled_capacity])
+
+
+    def formulate_knapsack_qubo_unbalanced(self, weights, values, total_budget, lambdas=None):
+        """
+        Formulates the QUBO with the unbalanced penalization method.
+        This means the QUBO does not use additional slack variables.
+        Params:
+            lambdas: Correspond to the penalty factors in the unbalanced formulation.
+        """
+        if lambdas is None:
+            lambdas = [0.96, 0.0371]
+        num_items = len(values)
+        x = [sp.symbols(f"{i}") for i in range(num_items)]
+        cost = 0
+        constraint = 0
+
+        for i in range(num_items):
+            cost -= x[i] * values[i]
+            constraint += x[i] * weights[i]
+
+        H_constraint = total_budget - constraint
+        H_constraint_taylor = (
+            1 - lambdas[0] * H_constraint + 0.5 * lambdas[1] * H_constraint**2
+        )
+        H_total = cost + H_constraint_taylor
+        H_total = H_total.expand()
+        H_total = sp.simplify(H_total)
+
+        for i in range(len(x)):
+            H_total = H_total.subs(x[i] ** 2, x[i])
+
+        H_total = H_total.expand()
+        H_total = sp.simplify(H_total)
+
+        "Transform into QUBO matrix"
+        coefficients = H_total.as_coefficients_dict()
+
+        # Remove the offset
+        try:
+            offset = coefficients.pop(1)
+        except IndexError:
+            print("Warning: No offset found in coefficients. Using default of 0.")
+            offset = 0
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            offset = 0
+
+        # Get the QUBO
+        QUBO = np.zeros((num_items, num_items))
+        for key, value in coefficients.items():
+            key = str(key)
+            parts = key.split("*")
+            if len(parts) == 1:
+                QUBO[int(parts[0]), int(parts[0])] = value
+            elif len(parts) == 2:
+                QUBO[int(parts[0]), int(parts[1])] = value / 2
+                QUBO[int(parts[1]), int(parts[0])] = value / 2
+        return offset, QUBO
+
+
+    def convert_QUBO_to_ising(self, offset, Q):
+        """Convert the matrix Q of Eq.3 into Eq.13 elements J and h"""
+        n_qubits = len(Q)  # Get the number of qubits (variables) in the QUBO matrix
+        # Create default dictionaries to store h and pairwise interactions J
+        h = np.zeros(Q.shape[0])
+        J = []
+
+        # Loop over each qubit (variable) in the QUBO matrix
+        for i in range(n_qubits):
+            # Update the magnetic field for qubit i based on its diagonal element in Q
+            h[i] -= Q[i, i] / 2
+            # Update the offset based on the diagonal element in Q
+            offset += Q[i, i] / 2
+            # Loop over other qubits (variables) to calculate pairwise interactions
+            for j in range(i + 1, n_qubits):
+                # Update the pairwise interaction strength (J) between qubits i and j
+                J.append([i, j, Q[i, j] / 4])
+                # Update the magnetic fields for qubits i and j based on their interactions in Q
+                h[i] -= Q[i, j] / 4
+                h[j] -= Q[i, j] / 4
+                # Update the offset based on the interaction strength between qubits i and j
+                offset += Q[i, j] / 4
+        J = np.stack(J)
+        J = np.expand_dims(
+            J, axis=0
+        )  # Return the magnetic fields, pairwise interactions, and the updated offset
+        h = np.expand_dims(
+            h, axis=0
+        )  # Return the magnetic fields, pairwise interactions, and the updated offset
+        return offset, h, J
+
+
+
 
 
 def make_env(env_id, config):
     def thunk():
-        env = create_jumanji_env(env_id, config)
+        if env_id == 'Knapsack-v1':
+            num_items = config.get("num_items", 5)
+            total_budget = config.get("total_budget", 2)
+            generator_knapsack = RandomGenerator(
+                num_items=num_items, total_budget=total_budget
+            )
+            env = Knapsack(generator=generator_knapsack)
+            env = wrappers.JumanjiToGymWrapper(env)
+            env = gym.wrappers.RecordEpisodeStatistics(env)
+            env = JumanjiWrapperKnapsack(env)
+        else:
+            raise KeyError("This tutorial only works for the Knapsack problem.")
 
         return env
 
     return thunk
-
-
-def knapsack_formulate_qubo_unbalanced(weights, values, max_weight, lambdas=None):
-    """
-    Formulates the QUBO with the unbalanced penalization method.
-    This means the QUBO does not use additional slack variables.
-    Params:
-        lambdas: Correspond to the penalty factors in the unbalanced formulation.
-    """
-    if lambdas is None:
-        lambdas = [0.96, 0.0371]
-    num_items = len(values)
-    x = [sp.symbols(f"{i}") for i in range(num_items)]
-    cost = 0
-    constraint = 0
-
-    for i in range(num_items):
-        cost -= x[i] * values[i]
-        constraint += x[i] * weights[i]
-
-    H_constraint = max_weight - constraint
-    H_constraint_taylor = (
-        1 - lambdas[0] * H_constraint + 0.5 * lambdas[1] * H_constraint**2
-    )
-    H_total = cost + H_constraint_taylor
-    H_total = H_total.expand()
-    H_total = sp.simplify(H_total)
-
-    for i in range(len(x)):
-        H_total = H_total.subs(x[i] ** 2, x[i])
-
-    H_total = H_total.expand()
-    H_total = sp.simplify(H_total)
-
-    "Transform into QUBO matrix"
-    coefficients = H_total.as_coefficients_dict()
-
-    # Remove the offset
-    try:
-        offset = coefficients.pop(1)
-    except IndexError:
-        print("Warning: No offset found in coefficients. Using default of 0.")
-        offset = 0
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        offset = 0
-
-    # Get the QUBO
-    QUBO = np.zeros((num_items, num_items))
-    for key, value in coefficients.items():
-        key = str(key)
-        parts = key.split("*")
-        if len(parts) == 1:
-            QUBO[int(parts[0]), int(parts[0])] = value
-        elif len(parts) == 2:
-            QUBO[int(parts[0]), int(parts[1])] = value / 2
-            QUBO[int(parts[1]), int(parts[0])] = value / 2
-    return offset, QUBO
-
-
-def knapsack_convert_QUBO_to_ising(offset, Q):
-    """Convert the matrix Q of Eq.3 into Eq.13 elements J and h"""
-    n_qubits = len(Q)  # Get the number of qubits (variables) in the QUBO matrix
-    # Create default dictionaries to store h and pairwise interactions J
-    h = np.zeros(Q.shape[0])
-    J = []
-
-    # Loop over each qubit (variable) in the QUBO matrix
-    for i in range(n_qubits):
-        # Update the magnetic field for qubit i based on its diagonal element in Q
-        h[i] -= Q[i, i] / 2
-        # Update the offset based on the diagonal element in Q
-        offset += Q[i, i] / 2
-        # Loop over other qubits (variables) to calculate pairwise interactions
-        for j in range(i + 1, n_qubits):
-            # Update the pairwise interaction strength (J) between qubits i and j
-            J.append([i, j, Q[i, j] / 4])
-            # Update the magnetic fields for     qubits i and j based on their interactions in Q
-            h[i] -= Q[i, j] / 4
-            h[j] -= Q[i, j] / 4
-            # Update the offset based on the interaction strength between qubits i and j
-            offset += Q[i, j] / 4
-    J = np.stack(J)
-    J = np.expand_dims(
-        J, axis=0
-    )  # Return the magnetic fields, pairwise interactions, and the updated offset
-    h = np.expand_dims(
-        h, axis=0
-    )  # Return the magnetic fields, pairwise interactions, and the updated offset
-    return offset, h, J
-
-
-def knapsack_state_converter(state, envs):
-    state = state[0]
-    num_items = envs.envs[0].unwrapped.num_items
-    total_budget = envs.envs[0].unwrapped.total_budget
-    values = state[num_items * 2 : num_items * 3]
-    weights = state[-num_items:]
-
-    offset, QUBO = knapsack_formulate_qubo_unbalanced(weights, values, total_budget)
-    offset, h, J = knapsack_convert_QUBO_to_ising(offset, QUBO)
-
-    return offset, h, J
 
 
 def cost_hamiltonian_ansatz(
@@ -169,49 +260,36 @@ class PPOAgentQuantumJumanji(nn.Module):
         super().__init__()
         self.config = config
         self.envs = envs
-        self.num_features = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.wires = range(self.num_qubits)
 
+        assert (
+            self.num_qubits >= self.num_actions
+        ), "Number of qubits must be greater than or equal to the number of actions"
+
         # input and output scaling are always initialized as ones
         self.input_scaling_critic = nn.Parameter(
-            torch.ones(
-                self.num_layers,
-            ),
-            requires_grad=True,
+            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
         )
         self.output_scaling_critic = nn.Parameter(torch.tensor(1.0), requires_grad=True)
         # trainable weights are initialized randomly between -pi and pi
         self.weights_critic = nn.Parameter(
-            torch.rand(
-                self.num_layers,
-            )
-            * 2
-            * torch.pi
-            - torch.pi,
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
 
         # input and output scaling are always initialized as ones
         self.input_scaling_actor = nn.Parameter(
-            torch.ones(
-                self.num_layers,
-            ),
-            requires_grad=True,
+            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
         )
         self.output_scaling_actor = nn.Parameter(
             torch.ones(self.num_actions), requires_grad=True
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights_actor = nn.Parameter(
-            torch.rand(
-                self.num_layers,
-            )
-            * 2
-            * torch.pi
-            - torch.pi,
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
 
@@ -223,14 +301,9 @@ class PPOAgentQuantumJumanji(nn.Module):
             interface="torch",
         )
 
-        # We will need to add an additional converter for the state
-        self.state_converter = knapsack_state_converter
-
     def get_value(self, x):
-        offset, h, J = self.state_converter(x, self.envs)
         value = self.quantum_circuit(
-            h,
-            J,
+            x,
             self.input_scaling_critic,
             self.weights_critic,
             self.wires,
@@ -243,10 +316,8 @@ class PPOAgentQuantumJumanji(nn.Module):
         return value
 
     def get_action_and_value(self, x, action=None):
-        offset, h, J = self.state_converter(x, self.envs)
         logits = self.quantum_circuit(
-            h,
-            J,
+            x,
             self.input_scaling_actor,
             self.weights_actor,
             self.wires,
@@ -299,6 +370,9 @@ def ppo_quantum_jumanji(config):
     if target_kl == "None":
         target_kl = None
 
+    if config["seed"] == "None":
+        config["seed"] = None
+
     batch_size = int(num_envs * num_steps)
     minibatch_size = int(batch_size // num_minibatches)
     num_iterations = total_timesteps // batch_size
@@ -315,7 +389,7 @@ def ppo_quantum_jumanji(config):
 
     if config["wandb"]:
         wandb.init(
-            project="cleanqrl",
+            project=config["project_name"],
             sync_tensorboard=True,
             config=config,
             name=name,
@@ -325,14 +399,16 @@ def ppo_quantum_jumanji(config):
         )
 
     # TRY NOT TO MODIFY: seeding
-    # if 'seed' in config.keys():
-    #     random.seed(seed)
-    #     np.random.seed(seed)
-    #     torch.manual_seed(seed)
-    seed = np.random.randint(0, 1e9)
+    if config["seed"] is None:
+        seed = np.random.randint(0, 1e9)
+    else:
+        seed = config["seed"]
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     device = torch.device("cuda" if (torch.cuda.is_available() and cuda) else "cpu")
-    # assert env_id in gym.envs.registry.keys(), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, config) for i in range(num_envs)],
@@ -341,9 +417,7 @@ def ppo_quantum_jumanji(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantumJumanji(envs, config).to(
-        device
-    )  # This is what I need to change to fit quantum into the picture
+    agent = PPOAgentQuantumJumanji(envs, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
@@ -366,14 +440,18 @@ def ppo_quantum_jumanji(config):
     dones = torch.zeros((num_steps, num_envs)).to(device)
     values = torch.zeros((num_steps, num_envs)).to(device)
 
+    # global parameters to log
     global_step = 0
+    global_episodes = 0
+    print_interval = 50
+    episode_returns = deque(maxlen=print_interval)
+    episode_approximation_ratio = deque(maxlen=print_interval)
+
+    # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     next_obs, _ = envs.reset(seed=seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(num_envs).to(device)
-    global_episodes = 0
-    episode_returns = []
-    episode_approximation_ratio = []
 
     for iteration in range(1, num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -426,10 +504,10 @@ def ppo_quantum_jumanji(config):
                             )
                         log_metrics(config, metrics, report_path)
 
-                if global_episodes % 10 == 0 and not ray.is_initialized():
-                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns[-10:])}"
-                    if "approximation_ratio" in infos.keys():
-                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio[-10:])}"
+                if global_episodes % print_interval == 0 and not ray.is_initialized():
+                    logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
+                    if len(episode_approximation_ratio) > 0:
+                        logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
                     print(logging_info)
 
         # bootstrap value if not done
@@ -554,24 +632,26 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "ppo_quantum_knapsack"  # Name of the trial
+        trial_name: str = "ppo_quantum_jumanji"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = False  # Use wandb to log experiment data
+        wandb: bool = True  # Use wandb to log experiment data
+        project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "Knapsack-v1"  # Environment ID
-        num_items: int = 3
-        total_budget: int = 1.5
+        num_items: int = 4
+        total_budget: int = 2
 
         # Algorithm parameters
-        total_timesteps: int = 100000  # Total timesteps for the experiment
+        total_timesteps: int = 1000000  # Total timesteps for the experiment
         num_envs: int = 1  # Number of parallel environments
-        num_steps: int = 512  # Steps per environment per policy rollout
+        seed: int = None  # Seed for reproducibility
+        num_steps: int = 2048  # Steps per environment per policy rollout
         anneal_lr: bool = True  # Toggle for learning rate annealing
         lr_input_scaling: float = 0.01  # Learning rate for input scaling
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
-        gamma: float = 0.99  # Discount factor gamma
+        gamma: float = 0.9  # Discount factor gamma
         gae_lambda: float = 0.95  # Lambda for general advantage estimation
         num_minibatches: int = 32  # Number of mini-batches
         update_epochs: int = 10  # Number of epochs to update the policy
@@ -583,10 +663,10 @@ if __name__ == "__main__":
         max_grad_norm: float = 0.5  # Maximum gradient norm for clipping
         target_kl: float = None  # Target KL divergence threshold
         cuda: bool = False  # Whether to use CUDA
-        num_qubits: int = 3  # Number of qubits
-        num_layers: int = 5  # Number of layers in the quantum circuit
-        device: str = "lightning.qubit"  # Quantum device
-        diff_method: str = "adjoint"  # Differentiation method
+        num_qubits: int = 4  # Number of qubits
+        num_layers: int = 2  # Number of layers in the quantum circuit
+        device: str = "default.qubit"  # Quantum device
+        diff_method: str = "backprop"  # Differentiation method
         save_model: bool = True  # Save the model after the run
 
     config = vars(Config())
@@ -596,7 +676,7 @@ if __name__ == "__main__":
         datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + "_" + config["trial_name"]
     )
     config["path"] = os.path.join(
-        os.path.dirname(os.getcwd()), config["trial_path"], config["trial_name"]
+        Path(__file__).parent.parent, config["trial_path"], config["trial_name"]
     )
 
     # Create the directory and save a copy of the config file so that the experiment can be replicated

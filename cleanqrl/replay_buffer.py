@@ -2,10 +2,22 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from typing import Any, Optional, Union
+from copy import deepcopy
 
 import numpy as np
 import torch as th
+import gymnasium as gym
 from gymnasium import spaces
+
+
+class ReplayBufferWrapper(gym.Wrapper):
+    def step(self, action):
+        state, reward, terminate, truncate, info = self.env.step(action)
+        if truncate or terminate:
+            info["final_observation"] = deepcopy(self.previous_state)
+        self.previous_state = state
+
+        return state, reward, terminate, truncate, info
 
 
 class ReplayBufferSamples:
