@@ -15,7 +15,7 @@ gpus_per_worker:        0
 env_id:   Pendulum-v1
 
 # algorithm parameters
-env_wrapper:        minmax
+env_wrapper:        arctan
 agent:               PPO_quantum_continuous
 total_timesteps:    1000000
 num_envs:           2

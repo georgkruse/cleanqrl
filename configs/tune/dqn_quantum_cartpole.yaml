@@ -15,7 +15,7 @@ gpus_per_worker:        0
 env_id:   CartPole-v1
 
 # algorithm parameters
-env_wrapper:        minmax
+env_wrapper:        arctan
 agent:               DQN_quantum
 total_timesteps:    200000
 learning_rate:      0.001

@@ -17,7 +17,7 @@ num_items:          4
 total_budget:       2
 
 # algorithm parameters
-env_wrapper:        minmax
+env_wrapper:         arctan
 agent:               PPO_quantum_jumanji
 total_timesteps:    10000
 num_envs:           1

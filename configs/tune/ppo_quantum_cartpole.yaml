@@ -15,7 +15,7 @@ gpus_per_worker:        0
 env_id:   CartPole-v1
 
 # algorithm parameters
-env_wrapper:        minmax
+env_wrapper:        arctan
 agent:               PPO_quantum
 total_timesteps:    200000
 num_envs:           5
