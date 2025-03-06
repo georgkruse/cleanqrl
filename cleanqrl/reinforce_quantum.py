@@ -33,7 +33,7 @@ def make_env(env_id, config=None):
 
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
-        for i, wire in enumerate(wires):
+        for i, feature in enumerate(x[:,]):
             qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
 
         for i, wire in enumerate(wires):
@@ -167,7 +167,7 @@ def reinforce_quantum(config):
     ), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for _ in range(num_envs)],
+        [make_env(env_id, config) for _ in range(num_envs)],
     )
 
     assert isinstance(

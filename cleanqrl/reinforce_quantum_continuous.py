@@ -172,7 +172,7 @@ def reinforce_quantum_continuous(config):
     ), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for _ in range(num_envs)],
+        [make_env(env_id, config) for _ in range(num_envs)],
     )
 
     assert isinstance(
