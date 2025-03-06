@@ -18,7 +18,7 @@ import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
-from cleanqrl.wrapper import create_jumanji_env
+from cleanqrl.wrapper import create_jumanji_env, ArctanNormalizationWrapper
 
 # from cleanqrl.wrapper_utils import knapsack_converter
 
@@ -26,7 +26,8 @@ from cleanqrl.wrapper import create_jumanji_env
 def make_env(env_id, config):
     def thunk():
         env = create_jumanji_env(env_id, config)
-
+        if config["env_wrapper"] == "arctan":
+            env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk
@@ -462,6 +463,7 @@ if __name__ == "__main__":
         num_cities: int = 4
 
         # Algorithm parameters
+        env_wrapper: str = "arctan"  # Environment wrapper
         total_timesteps: int = 1000000  # Total timesteps for the experiment
         num_envs: int = 1  # Number of parallel environments
         seed: int = None  # Seed for reproducibility

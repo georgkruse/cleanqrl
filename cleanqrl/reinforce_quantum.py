@@ -24,7 +24,8 @@ def make_env(env_id, config=None):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = ArctanNormalizationWrapper(env)
+        if config["env_wrapper"] == "arctan":
+            env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk
@@ -281,6 +282,7 @@ if __name__ == "__main__":
         env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
+        env_wrapper: str = "arctan"  # Environment wrapper
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
         total_timesteps: int = 100000  # Total number of timesteps

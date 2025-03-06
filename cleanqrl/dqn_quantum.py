@@ -18,12 +18,14 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
-
+from cleanqrl.wrapper import ArctanNormalizationWrapper
 
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        if config["env_wrapper"] == "arctan":
+            env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk
@@ -297,6 +299,7 @@ if __name__ == "__main__":
         env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
+        env_wrapper: str = "arctan"  # Environment wrapper
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
         buffer_size: int = 10000  # Size of the replay buffer

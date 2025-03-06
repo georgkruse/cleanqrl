@@ -31,7 +31,8 @@ def make_env(env_id, config):
         env = gym.wrappers.NormalizeObservation(env)
         env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
-        env = ArctanNormalizationWrapper(env)
+        if config["env_wrapper"] == "arctan":
+            env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk
@@ -446,6 +447,7 @@ if __name__ == "__main__":
         env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
+        env_wrapper: str = "arctan"  # Environment wrapper
         total_timesteps: int = 1000000  # Total timesteps for the experiment
         num_envs: int = 1  # Number of parallel environments
         seed: int = None  # Seed for reproducibility
