@@ -1,19 +1,19 @@
 # CleanQRL (Clean Quantum Reinforcement Learning)
 
 
-
 [<img src="https://img.shields.io/badge/license-MIT-blue">](https://github.com/georgkruse/cleanqrl?tab=License-1-ov-file)
 [![docs](https://img.shields.io/github/deployments/vwxyzjn/cleanrl/Production?label=docs&logo=vercel)](https://georgkruse.github.io/cleanqrl-docs/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Imports: isort](https://img.shields.io/badge/%20imports-isort-%231674b1?style=flat&labelColor=ef8336)](https://pycqa.github.io/isort/)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)]()
+[![Open In Colab]()]()
 
-**CleanQRL** is a Reinforcement Learning library specifically tailored to the subbranch of Quantum Reinforcement Learning and is greatly inspired by the amazing work of **[CleanRL](https://github.com/vwxyzjn/cleanrl)**. Just as the classical analougue, we aim to provide high-quality single-file implementation with research-friendly features. The implementation follows mainly the ideas of **[CleanRL](https://github.com/vwxyzjn/cleanrl)** and is clean and simple, yet can scale nicely trough additional features such as **[ray tune](https://docs.ray.io/en/latest/tune/index.html)**. The main features of this repository are
+
+**CleanQRL** is a Reinforcement Learning library specifically tailored to the subbranch of Quantum Reinforcement Learning and is greatly inspired by the amazing work of **[CleanRL](https://github.com/vwxyzjn/cleanrl)**. Just as the classical analogue, we aim to provide high-quality single-file implementation with research-friendly features. The implementation follows mainly the ideas of **[CleanRL](https://github.com/vwxyzjn/cleanrl)** and is clean and simple, yet can scale nicely trough additional features such as **[ray tune](https://docs.ray.io/en/latest/tune/index.html)**. The main features of this repository are
 
 
 * 📜 Single-file implementations of classical and quantum version of 5+ Reinforcement Learning agents 
 * 💾 Tuned and Benchmarked agents (with available configs)
-* 🎮 Integration of gymnasium, mujoco and jumanji
+* 🎮 Integration of [gymnasium](https://gymnasium.farama.org/), [mujoco](https://www.gymlibrary.dev/environments/mujoco/index.html) and [jumanji](https://github.com/instadeepai/jumanji)
 * 📘 Examples on how to enhance the standard QRL agents on a variety of games
 * 📈 Tensorboard Logging
 * 🌱 Local Reproducibility via Seeding
@@ -26,17 +26,13 @@ What we are missing compared to **[CleanRL](https://github.com/vwxyzjn/cleanrl)*
 * 📹 Videos of Gameplay Capturing
 
 
-You can read more about CleanRL in [our upcoming paper]() and [see the docs for additional documentation](https://georgkruse.github.io/cleanqrl-docs/).
+You can read more about **CleanQRL** in [our upcoming paper]().
 
+# Get started
 
+## Installation
 
-> ⚠️ **NOTE**: CleanQRL is greatly based on CleanRL. The implementations of the classical agents are entirely based on these implementations, but updated to gymnasium 1.0 as well as adapted to ray tune. The quantum versions of the algorithms are done with as little changes to the classical versions as possible, such that it is easy to understand.
-
-> ⚠️ **NOTE**: This repository is meant for people interested in QRL and want to get started as quick as possible. However, the algorithms are not meant as imports as popular other RL libraries such as RLlib and StableBaselines. Instead, our implementations aims to make it easy to understand the algorithms and enable users to quickly adapt these implementations to their needs with easy debugging possible. 
-
-## Get started
-
-To run experiments locally, give the following a try:
+To run experiments locally, you need to clone the repository and install a python environment.
 
 ```bash
 git clone https://github.com/georgkruse/cleanqrl.git
@@ -44,28 +40,50 @@ cd cleanqrl
 conda env create -f environment.yaml
 ```
 
+Thats it, now you set up!
+
 ## Run first experiments
 
-Each agent can be run as a single file, either from the parent directory or directly in the subfolder. 
+Each agent can be run as a single file, either from the parent directory or directly in the subfolder. First, activate the environment ```cleanqrl``` and then execute the algorithm's python file:
 
 ```
-python cleanrl/dqn_quantum.py 
+conda activate cleanqrl
+python cleanrl/reinforce_quantum.py 
 ```
 
+or go directly into the folder and execute
+
 ```
+conda activate cleanqrl
 cd cleanqrl 
-python ppo_classical.py 
+python reinforce_quantum.py 
 ```
 
-The parameters can be changed in the ```Config``` class at the end of each file:
+Before you execute the files, customize the parameters in the  ```Config``` class at the end of each file. Every file has such a dataclass object and the algorithm is callable as a function which takes the config as input:
+
 
 ```python
+def reinforce_quantum(config):
+    num_envs = config["num_envs"]
+    total_timesteps = config["total_timesteps"]
+    env_id = config["env_id"]
+    gamma = config["gamma"]
+    lr_input_scaling = config["lr_input_scaling"]
+    lr_weights = config["lr_weights"]
+    lr_output_scaling = config["lr_output_scaling"]
+    .... 
+```
+
+This function can also be called from an external file (see below for details). But first, lets have a closer look to the the ```Config```: 
+
+```py title="reinforce_quantum.py"
 @dataclass
 class Config:
     # General parameters
     trial_name: str = 'reinforce_quantum'  # Name of the trial
     trial_path: str = 'logs'  # Path to save logs relative to the parent directory
-    wandb: bool = True # Use wandb to log experiment data 
+    wandb: bool = False # Use wandb to log experiment data 
+    project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
     # Environment parameters
     env_id: str = "CartPole-v1" # Environment ID
@@ -86,61 +104,103 @@ class Config:
 
 ```
 
-Additionally, all algorithms can be executed using the ```main functions``` in the root directory. All parameters for the algorithms are specified in the ```configs``` folder. [See additional information in the documentation.]()
+As you can see, the config is devided into 3 parts:
 
-By default, all metrics are logged to a json file. 
+* **General parameters**: Here the name of your experiment as well as the logging path is defined. All metrics will be logged in a ```result.json``` file in the result folder which will have the time of the experiment execution as a prefix. You can also use [wandb](https://wandb.ai/site) for enhanced metric logging. 
+* **Environment parameters**: This is in the simplest case just the string of the gym environment. For jumanji environments as well as for your custom environments, you can also specify additional parameters here (see #Tutorials for details).
+* **Algorithms parameters**: All algorithms hyperparameters are specified here. For details on the parameters see [the algorithms section]()
 
-For tensorboard logging, you can use  ray tune (see more in the following section and the [docs]())
+Once you execute the file, it will create the subfolders and copy the config which is used for the experiment in the folder:
 
-To use experiment tracking with [wandb](), you need to set the boolean variable ```wandb``` in the config class or the config file to ```True``` and then run: 
+```py title="reinforce_quantum.py"
+    config = vars(Config())
+    
+    # Based on the current time, create a unique name for the experiment
+    config['trial_name'] = datetime.now().strftime("%Y-%m-%d--%H-%M-%S") + '_' + config['trial_name']
+    config['path'] = os.path.join(Path(__file__).parent.parent, config['trial_path'], config['trial_name'])
+
+    # Create the directory and save a copy of the config file so that the experiment can be replicated
+    os.makedirs(os.path.dirname(config['path'] + '/'), exist_ok=True)
+    config_path = os.path.join(config['path'], 'config.yml')
+    with open(config_path, 'w') as file:
+        yaml.dump(config, file)
+
+    # Start the agent training 
+    reinforce_quantum(config)   
+```
+
+After the execution, the experiment data is saved e.g. at: 
+
+    ...
+    configs
+    examples
+    logs/
+        2025-03-04--14-59-32_reinforce_quantum          # The name of your experiment
+            config.yaml                                 # Config which was used to run this experiment
+            result.json                                 # Results of the experiment
+    .gitignore
+    ...
+
+
+You can also set the ```wandb``` variable to ```True```:
+
+```py title="reinforce_quantum.py" hl_lines="4 6"
+@dataclass
+class Config:
+    # General parameters
+    trial_name: str = 'reinforce_quantum_wandb'  # Name of the trial
+    trial_path: str = 'logs'  # Path to save logs relative to the parent directory
+    wandb: bool = True # Use wandb to log experiment data 
+    project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
+
+    # Environment parameters
+    env_id: str = "CartPole-v1" # Environment ID
+```
+
+You will need to login to your [wandb](https://wandb.ai/site) account before you can run:
 
 ```bash
 wandb login # only required for the first time
-python cleanrl/ppo_quantum.py \
+python cleanrl/reinforce_quantum.py \
 ```
-## Hyperparameter Tuning 
 
+This will create an additional folder for the [wandb](https://wandb.ai/site) logging and you can inspect your experiment data also online:
 
+    ...
+    configs
+    examples
+    logs/
+        2025-03-04--14-59-32_reinforce_quantum_wandb    # The name of your experiment
+            wandb                                       # Subfolder of the wandb logging
+            config.yaml                                 # Config which was used to run this experiment
+            result.json                                 # Results of the experiment
+    .gitignore
+    ...
 
-## Algorithms Implemented
+# Algorithms
 
+## Contact and Community
 
-
-| Algorithm      | Variants Implemented |
-| ----------- | ----------- |
-| ✅ [REINFORCE]() |  [`reinforce_classical.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/reinforce_classical.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#reinforce_classicalpy) |
-| | [`reinforce_quantum.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/reinforce_quantum.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#reinforce_quantumpy) |
-| ✅ [Deep Q-Learning (DQN)](https://web.stanford.edu/class/psych209/Readings/MnihEtAlHassibis15NatureControlDeepRL.pdf) | [`dqn_classical.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/dqn_classical.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#dqn_classicalpy) |
-| | [`dqn_quantum.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/dqn_quantum.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#dqn_quantumpy) |
-| ✅ [Proximal Policy Gradient (PPO)](https://arxiv.org/pdf/1707.06347.pdf)  |  [`ppo_classical.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ppo_classical.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ppo_classicalpy) |
-| |  [`ppo_classical_continuous.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ppo_classical_continuous.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ppo_classical_continuouspy) |
-| |  [`ppo_classical_jumanji.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ppo_classical_jumanji.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ppo_classical_jumanjipy) |
-| |  [`ppo_quantum.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ppo_quantum.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ppo_quantumpy) |
-| |  [`ppo_quantum_continuous.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ppo_quantum_continuous.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ppo_quantum_continuouspy) |
-| |  [`ppo_quantum_jumanji.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ppo_quantum_jumanji.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ppo_quantum_jumanjipy) |
-| ✅ [Deep Deterministic Policy Gradient (DDPG)](https://arxiv.org/pdf/1509.02971.pdf) |  [`ddpg_classical.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ddpg_classical.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ddpg_classicalpy) |
-| | [`ddpg_quantum.py`](https://github.com/georgkruse/cleanqrl/blob/main/cleanqrl/ddpg_quantum.py), [docs](https://georgkruse.github.io/cleanqrl-docs/algorithms/#ddpg_quantumpy) |
-
-## Open (Q)RL Benchmark
-
-To make our experimental data transparent, CleanQRL participates in a related project called [Open RL Benchmark](https://github.com/openrlbenchmark/openrlbenchmark), which contains tracked experiments from popular DRL libraries such as ours, [Stable-baselines3](https://github.com/DLR-RM/stable-baselines3), [openai/baselines](https://github.com/openai/baselines), [jaxrl](https://github.com/ikostrikov/jaxrl), and others. 
-
-Since the field of QRL is relatively new, we are not aware of any benchmarks of 
-## Support and Community
-
-We want to grow as a community, so posting [Github Issues](https://github.com/vwxyzjn/cleanrl/issues) and PRs are very welcome! If you are missing and algorithms or have a specific problem to which you want to tailor your QRL algorithms but fail to do so, you can also create a feature request!
+We want to grow as a community, so posting [Github Issues](https://github.com/georgkruse/cleanqrl/issues) and PRs are very welcome! If you are missing and algorithms or have a specific problem to which you want to tailor your QRL algorithms but fail to do so, you can also create a feature request!
 
 ## Citing CleanQRL
 
-If you use CleanQRL in your work, please cite our technical [paper]():
+If you use **CleanQRL** in your work, please cite our [paper]:
+
+
+## Citing CleanRL
+
+If you used mainly the classical parts of our code in your work, please cite the original [CleanRL paper](https://www.jmlr.org/papers/v23/21-1342.html):
 
 ```bibtex
-
+@article{huang2022cleanrl,
+  author  = {Shengyi Huang and Rousslan Fernand Julien Dossa and Chang Ye and Jeff Braga and Dipam Chakraborty and Kinal Mehta and João G.M. Araújo},
+  title   = {CleanRL: High-quality Single-file Implementations of Deep Reinforcement Learning Algorithms},
+  journal = {Journal of Machine Learning Research},
+  year    = {2022},
+  volume  = {23},
+  number  = {274},
+  pages   = {1--18},
+  url     = {http://jmlr.org/papers/v23/21-1342.html}
+}
 ```
-
-
-## Other works which CleanQRL implementations are based on
-
-
-## Other works using CleanQRl
-

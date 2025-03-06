@@ -90,7 +90,9 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
                 total_budget = self.env.unwrapped.total_budget
                 values = self.previous_state[num_items * 2 : num_items * 3]
                 weights = self.previous_state[-num_items:]
-                optimal_value = self.knapsack_optimal_value(weights, values, total_budget)
+                optimal_value = self.knapsack_optimal_value(
+                    weights, values, total_budget
+                )
                 info["optimal_value"] = optimal_value
                 info["approximation_ratio"] = info["episode"]["r"] / optimal_value
             # if info['approximation_ratio'] > 0.9:
@@ -222,7 +224,10 @@ def create_jumanji_env(env_id, config):
             env = jumanji.make(env_id)
         except:
             raise KeyError(f"Jumanji does not have the env '{env_id}'.")
-        print(f"WARNING: A custom wrapper for '{env_id}' is not implemented. This might lead to unexepected behaviour. See the tutorials for examples.")
+        print(
+            f"WARNING: A custom wrapper for '{env_id}' is not implemented.",
+            "This might lead to unexepected behaviour. See the tutorials for examples."
+        )
 
     env = jumanji.wrappers.JumanjiToGymWrapper(env)
     env = gym.wrappers.FlattenObservation(env)

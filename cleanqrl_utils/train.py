@@ -61,7 +61,7 @@ agent_switch = {
     "dqn_classical_jumanji": dqn_classical_jumanji,
     "dqn_quantum": dqn_quantum,
     "dqn_quantum_discrete_state": dqn_quantum_discrete_state,
-    'dqn_quantum_jumanji': dqn_quantum_jumanji,
+    "dqn_quantum_jumanji": dqn_quantum_jumanji,
     "reinforce_classical": reinforce_classical,
     "reinforce_classical_continuous_action": reinforce_classical_continuous_action,
     "reinforce_classical_discrete_state": reinforce_classical_discrete_state,
@@ -77,9 +77,9 @@ def train_agent(config):
     try:
         agent_type = config["agent"].lower()
         if agent_type not in agent_switch:
-            raise KeyError(f"Agent type '{agent_type}' not found in agent_switch dictionary")
+            raise KeyError(
+                f"Agent type '{agent_type}' not found in agent_switch dictionary"
+            )
         agent_switch[agent_type](config)
     except KeyError as e:
-        raise e  
-
-        
+        raise e

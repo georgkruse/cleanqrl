@@ -170,7 +170,9 @@ def dqn_classical_jumanji(config: dict):
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
                     if "approximation_ratio" in infos.keys():
-                        metrics["approximation_ratio"] = infos["approximation_ratio"][idx]
+                        metrics["approximation_ratio"] = infos["approximation_ratio"][
+                            idx
+                        ]
                         episode_approximation_ratio.append(
                             metrics["approximation_ratio"]
                         )
@@ -197,11 +199,17 @@ def dqn_classical_jumanji(config: dict):
             if global_step % train_frequency == 0:
                 data = rb.sample(batch_size)
                 with torch.no_grad():
-                    target_max, _ = target_network(data.next_observations.float()).max(dim=1)
+                    target_max, _ = target_network(data.next_observations.float()).max(
+                        dim=1
+                    )
                     td_target = data.rewards.flatten() + gamma * target_max * (
                         1 - data.dones.flatten()
                     )
-                old_val = q_network(data.observations.float()).gather(1, data.actions).squeeze()
+                old_val = (
+                    q_network(data.observations.float())
+                    .gather(1, data.actions)
+                    .squeeze()
+                )
                 loss = F.mse_loss(td_target, old_val)
 
                 if global_step % 100 == 0:

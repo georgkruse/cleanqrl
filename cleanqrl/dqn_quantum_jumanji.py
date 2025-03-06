@@ -182,7 +182,7 @@ def dqn_quantum_jumanji(config: dict):
             save_code=True,
             dir=report_path,
         )
-        
+
     # TRY NOT TO MODIFY: seeding
     if config["seed"] is None:
         seed = np.random.randint(0, 1e9)
@@ -255,7 +255,9 @@ def dqn_quantum_jumanji(config: dict):
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
                     if "approximation_ratio" in infos.keys():
-                        metrics["approximation_ratio"] = infos["approximation_ratio"][idx]
+                        metrics["approximation_ratio"] = infos["approximation_ratio"][
+                            idx
+                        ]
                         episode_approximation_ratio.append(
                             metrics["approximation_ratio"]
                         )
@@ -266,7 +268,6 @@ def dqn_quantum_jumanji(config: dict):
                 if len(episode_approximation_ratio) > 0:
                     logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
                 print(logging_info)
-
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()

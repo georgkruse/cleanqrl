@@ -267,7 +267,9 @@ def reinforce_quantum_jumanji(config):
                     metrics["policy_loss"] = loss.item()
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
                     if "approximation_ratio" in infos.keys():
-                        metrics["approximation_ratio"] = infos["approximation_ratio"][idx]
+                        metrics["approximation_ratio"] = infos["approximation_ratio"][
+                            idx
+                        ]
                         episode_approximation_ratio.append(
                             metrics["approximation_ratio"]
                         )

@@ -27,7 +27,7 @@ def make_env(env_id):
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
-        
+
         return env
 
     return thunk
@@ -206,10 +206,13 @@ def dqn_classical_discrete_state(config: dict):
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
                     log_metrics(config, metrics, report_path)
-        
+
             if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
-                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
                 )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`

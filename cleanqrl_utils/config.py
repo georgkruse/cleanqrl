@@ -8,6 +8,16 @@ switch = {
 }
 
 
+def nested_copy(src, target):
+    if isinstance(target, dict):
+        for key, val in src.items():
+            if key in target:
+                if not isinstance(val, dict):
+                    target[key] = val
+                else:
+                    nested_copy(val, target[key])
+
+
 def add_hyperparameters(conf):
     for key, _ in conf.items():
         if isinstance(conf[key], list):
@@ -27,16 +37,6 @@ def add_hyperparameters(conf):
         elif isinstance(conf[key], dict):
             add_hyperparameters(conf[key])
     return conf
-
-
-def nested_copy(src, target):
-    if isinstance(target, dict):
-        for key, val in src.items():
-            if key in target:
-                if not isinstance(val, dict):
-                    target[key] = val
-                else:
-                    nested_copy(val, target[key])
 
 
 def extract_hyperparameters(conf):

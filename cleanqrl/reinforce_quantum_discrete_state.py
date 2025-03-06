@@ -278,7 +278,10 @@ def reinforce_quantum_discrete_state(config):
 
             if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
-                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
                 )
 
     if config["save_model"]:

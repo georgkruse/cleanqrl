@@ -6,9 +6,9 @@ import ray
 import yaml
 from ray import tune
 
-from cleanqrl_utils.config_utils import add_hyperparameters
-from cleanqrl_utils.plotting_utils import plot_tune_run
-from cleanqrl_utils.train_utils import train_agent
+from cleanqrl_utils.config import add_hyperparameters
+from cleanqrl_utils.plotting import plot_tune_run
+from cleanqrl_utils.train import train_agent
 
 if __name__ == "__main__":
     # Specify the path to the config file
@@ -50,7 +50,13 @@ if __name__ == "__main__":
             return trial.__str__() + "_" + trial.experiment_tag
 
         # We will use the tune.Tuner class to run multiple agents in parallel
-        trainable = tune.with_resources(train_agent, resources={"cpu" : config["cpus_per_worker"], "gpu": config["gpus_per_worker"]})
+        trainable = tune.with_resources(
+            train_agent,
+            resources={
+                "cpu": config["cpus_per_worker"],
+                "gpu": config["gpus_per_worker"],
+            },
+        )
         tuner = tune.Tuner(
             trainable,
             param_space=config,

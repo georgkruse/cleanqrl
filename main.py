@@ -4,8 +4,8 @@ from datetime import datetime
 
 import yaml
 
-from cleanqrl_utils.plotting_utils import plot_single_run
-from cleanqrl_utils.train_utils import train_agent
+from cleanqrl_utils.plotting import plot_single_run
+from cleanqrl_utils.train import train_agent
 
 if __name__ == "__main__":
     # Specify the path to the config file

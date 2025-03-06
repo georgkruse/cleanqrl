@@ -264,7 +264,10 @@ def dqn_quantum_discrete_state(config: dict):
 
             if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
-                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
                 )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`

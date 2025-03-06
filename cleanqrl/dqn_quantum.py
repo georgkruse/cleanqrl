@@ -24,6 +24,7 @@ from replay_buffer import ReplayBuffer
 from wrapper import ReplayBufferWrapper
 from cleanqrl.wrapper import ArctanNormalizationWrapper
 
+
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
@@ -31,7 +32,7 @@ def make_env(env_id, config):
         if config["env_wrapper"] == "arctan":
             env = ArctanNormalizationWrapper(env)
         env = ReplayBufferWrapper(env)
-        
+
         return env
 
     return thunk
@@ -246,7 +247,10 @@ def dqn_quantum(config: dict):
 
             if global_episodes % print_interval == 0 and not ray.is_initialized():
                 print(
-                    "Global step: ", global_step, " Mean return: ", np.mean(episode_returns)
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
                 )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
