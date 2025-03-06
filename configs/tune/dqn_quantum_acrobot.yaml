@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             dqn_cartpole
+trial_name:             dqn_acrobot
 wandb:                  True
 
 # ray tune parameters
@@ -12,7 +12,7 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   CartPole-v1
+env_id:   Acrobot-v1
 
 # algorithm parameters
 env_wrapper:          arctan
@@ -24,7 +24,7 @@ seed:               None
 buffer_size:        10000
 gamma:              0.99
 tau:                1.0
-target_network_frequency:   
+target_network_frequency:   #5
   - grid_search
   - int
   - [1, 5]
@@ -44,7 +44,7 @@ lr_weights:   #0.001
   - float
   - [0.001, 0.01]    
 lr_output_scaling:   0.1   
-num_qubits:         4
+num_qubits:         6
 num_layers:         5
 ansatz:             hea
 init_method:        uniform

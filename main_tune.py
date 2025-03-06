@@ -12,7 +12,7 @@ from cleanqrl_utils.train_utils import train_agent
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = 'configs/tune/ppo_quantum_cartpole.yaml'
+    config_path = 'configs/tune/dqn_quantum_acrobot.yaml'
 
     # Load the config file
     with open(config_path) as f:
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         return trial.__str__() + "_" + trial.experiment_tag
 
     # We will use the tune.Tuner class to run multiple agents in parallel
-    trainable = tune.with_resources(train_agent, num_cpus=config["cpus_per_worker"], num_gpus=config["gpus_per_worker"])
+    trainable = tune.with_resources(train_agent, resources={"cpu" : config["cpus_per_worker"], "gpu": config["gpus_per_worker"]})
     tuner = tune.Tuner(
         trainable,
         param_space=config,
