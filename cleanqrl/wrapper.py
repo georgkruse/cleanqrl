@@ -170,25 +170,6 @@ class JumanjiWrapperMaze(gym.Wrapper):
         self.previous_state = state
         return state, reward, False, truncate, info
 
-
-class MinMaxNormalizationWrapper(gym.ObservationWrapper):
-    def __init__(self, env):
-        super(MinMaxNormalizationWrapper, self).__init__(env)
-        self.low = env.observation_space.low
-        self.high = env.observation_space.high
-
-    def observation(self, observation):
-        normalized_obs = -np.pi + 2 * np.pi * (observation - self.low) / (
-            self.high - self.low
-        )
-        return normalized_obs
-
-
-class ArctanNormalizationWrapper(gym.ObservationWrapper):
-    def observation(self, obs):
-        return np.arctan(obs)
-
-
 class ReplayBufferWrapper(gym.Wrapper):
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)

@@ -19,8 +19,10 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
-from cleanqrl.wrapper import ArctanNormalizationWrapper
 
+class ArctanNormalizationWrapper(gym.ObservationWrapper):
+    def observation(self, obs):
+        return np.arctan(obs)
 
 def make_env(env_id, config):
     def thunk():
@@ -33,8 +35,8 @@ def make_env(env_id, config):
         env = gym.wrappers.NormalizeObservation(env)
         env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
-        if config["env_wrapper"] == "arctan":
-            env = ArctanNormalizationWrapper(env)
+        # The observation wrapper has a big impact on quantum agent performance. May need to be adjusted.
+        env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk
@@ -454,7 +456,6 @@ if __name__ == "__main__":
         env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
-        env_wrapper: str = "arctan"  # Environment wrapper
         total_timesteps: int = 1000000  # Total timesteps for the experiment
         num_envs: int = 1  # Number of parallel environments
         seed: int = None  # Seed for reproducibility

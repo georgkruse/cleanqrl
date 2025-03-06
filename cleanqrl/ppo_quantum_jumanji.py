@@ -25,8 +25,6 @@ from wrapper import create_jumanji_env
 def make_env(env_id, config):
     def thunk():
         env = create_jumanji_env(env_id, config)
-        if config["env_wrapper"] == "arctan":
-            env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk
@@ -457,7 +455,6 @@ if __name__ == "__main__":
         num_cities: int = 4
 
         # Algorithm parameters
-        env_wrapper: str = "arctan"  # Environment wrapper
         total_timesteps: int = 1000000  # Total timesteps for the experiment
         num_envs: int = 1  # Number of parallel environments
         seed: int = None  # Seed for reproducibility
