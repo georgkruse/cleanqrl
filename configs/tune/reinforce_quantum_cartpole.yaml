@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             reinforce_acrobot
+trial_name:             reinforce_cartpole
 wandb:                  True
 
 # ray tune parameters
@@ -12,7 +12,7 @@ cpus_per_worker:        2
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   Acrobot-v1
+env_id:   CartPole-v1
 
 # algorithm parameters
 env_wrapper:        minmax

@@ -12,7 +12,7 @@ from cleanqrl_utils.train_utils import train_agent
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = 'configs/ppo_classical_jumanji.yaml'
+    config_path = 'configs/tune/ppo_quantum_cartpole.yaml'
 
     # Load the config file
     with open(config_path) as f:

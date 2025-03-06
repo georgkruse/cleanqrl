@@ -17,12 +17,14 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
+from cleanqrl.wrapper import ArctanNormalizationWrapper
 
 
 def make_env(env_id, config=None):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = ArctanNormalizationWrapper(env)
         return env
 
     return thunk

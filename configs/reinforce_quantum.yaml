@@ -1,7 +1,7 @@
 # general parameters
 trial_path:             logs
 trial_name:             reinforce_cartpole
-wandb:                  True
+wandb:                  False
 
 # ray tune parameters
 ray_local_mode:         False

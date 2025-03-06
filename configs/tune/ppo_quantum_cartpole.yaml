@@ -5,7 +5,7 @@ wandb:                  True
 
 # ray tune parameters
 ray_local_mode:         False
-num_cpus:               32
+num_cpus:               24
 num_gpus:               0
 ray_num_trial_samples:  3
 cpus_per_worker:        2
@@ -18,7 +18,7 @@ env_id:   CartPole-v1
 env_wrapper:        minmax
 agent:               PPO_quantum
 total_timesteps:    200000
-num_envs:           2
+num_envs:           5
 seed:               None
 num_steps:          128
 anneal_lr:          True
