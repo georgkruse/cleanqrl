@@ -105,7 +105,6 @@ def ddpg_classical_continuous_action(config: dict):
     exploration_noise = config["exploration_noise"]
     learning_starts = config["learning_starts"]
     policy_frequency = config["policy_frequency"]
-    noise_clip = config["noise_clip"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -288,7 +287,7 @@ if __name__ == "__main__":
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "MountainCarContinuous-v0"  # Environment ID
+        env_id: str = "Pendulum-v1"  # Environment ID
 
         # Algorithm parameters
         total_timesteps: int = 100000  # Total number of timesteps
@@ -296,14 +295,13 @@ if __name__ == "__main__":
         learning_rate: float = 3e-4  # Learning rate
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
-        cuda: bool = True  # Cuda enabled
+        cuda: bool = False  # Cuda enabled
         gamma: float = 0.99  # Discount factor
         tau: float = 0.005  # Target network update rate
         batch_size: int = 256  # Batch size
         exploration_noise: float = 0.1  # Std of Gaussian exploration noise
         learning_starts: int = 25e3  # Timesteps before learning starts
         policy_frequency: int = 2  # Frequency of policy updates
-        noise_clip: float = 0.5  # Noise clip
 
     config = vars(Config())
 

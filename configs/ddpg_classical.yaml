@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             ddpg_cartpole
+trial_name:             ddpg_pendulum_classical
 wandb:                  True
 
 # ray tune parameters

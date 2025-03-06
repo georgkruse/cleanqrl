@@ -22,15 +22,18 @@ import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
 from wrapper import ReplayBufferWrapper
-from cleanqrl.wrapper import ArctanNormalizationWrapper
+
+class ArctanNormalizationWrapper(gym.ObservationWrapper):
+    def observation(self, obs):
+        return np.arctan(obs)
 
 
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        if config["env_wrapper"] == "arctan":
-            env = ArctanNormalizationWrapper(env)
+        # The observation wrapper has a big impact on quantum agent performance. May need to be adjusted.
+        env = ArctanNormalizationWrapper(env)
         env = ReplayBufferWrapper(env)
 
         return env
@@ -320,7 +323,6 @@ if __name__ == "__main__":
         env_id: str = "CartPole-v1"  # Environment ID
 
         # Algorithm parameters
-        env_wrapper: str = "arctan"  # Environment wrapper
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
         buffer_size: int = 10000  # Size of the replay buffer
