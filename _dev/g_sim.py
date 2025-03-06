@@ -66,7 +66,7 @@ gsim_forward, gsim_backward = forward(theta), jax.grad(forward)(theta)
 H = 0.5 * qml.sum(*[op.operation() for op in generators])
 
 
-@qml.qnode(qml.device("lightning.qubit", wires=n), interface="torch")
+@qml.qnode(qml.device("default.qubit", wires=n), interface="jax")
 def qnode(theta):
     for i, mu in enumerate(gate_choice):
         qml.exp(-1j * theta[i] * dla[mu].operation())
