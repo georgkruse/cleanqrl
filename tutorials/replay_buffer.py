@@ -2,10 +2,22 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from typing import Any, Optional, Union
+from copy import deepcopy
 
 import numpy as np
 import torch as th
+import gymnasium as gym
 from gymnasium import spaces
+
+
+class ReplayBufferWrapper(gym.Wrapper):
+    def step(self, action):
+        state, reward, terminate, truncate, info = self.env.step(action)
+        if truncate or terminate:
+            info["final_observation"] = deepcopy(self.previous_state)
+        self.previous_state = state
+
+        return state, reward, terminate, truncate, info
 
 
 class ReplayBufferSamples:
@@ -301,12 +313,23 @@ class ReplayBuffer(BaseBuffer):
                 env,
             )
         else:
-            next_obs = self._normalize_obs(
-                self.next_observations[batch_inds, env_indices, :], env
+            if len(self.next_observations.shape) == 2:
+                next_obs = self._normalize_obs(
+                    self.next_observations[batch_inds, env_indices], env
+                )
+            else:
+                next_obs = self._normalize_obs(
+                    self.next_observations[batch_inds, env_indices, :], env
+                )
+        if len(self.next_observations.shape) == 2:
+            obs = self._normalize_obs(self.observations[batch_inds, env_indices], env)
+        else:
+            obs = self._normalize_obs(
+                self.observations[batch_inds, env_indices, :], env
             )
 
         data = (
-            self._normalize_obs(self.observations[batch_inds, env_indices, :], env),
+            obs,
             self.actions[batch_inds, env_indices, :],
             next_obs,
             # Only use dones that are not due to timeouts
