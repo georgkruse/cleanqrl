@@ -20,8 +20,7 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from replay_buffer import ReplayBuffer
-from wrapper import ReplayBufferWrapper
+from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
 def make_env(env_id):
