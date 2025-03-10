@@ -7,8 +7,8 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-
 import gymnasium as gym
+import pennylane as qml
 import numpy as np
 import ray
 import torch
@@ -20,64 +20,161 @@ import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
-
+class ArctanNormalizationWrapper(gym.ObservationWrapper):
+    def observation(self, obs):
+        return np.arctan(obs)
+    
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = ArctanNormalizationWrapper(env)
         env = ReplayBufferWrapper(env)
         return env
 
     return thunk
 
+def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions, agent_type):
+    for layer in range(layers):
+        for i, feature in enumerate(x.T):
+            qml.RY(input_scaling[layer, i] * feature, wires=[i])
+            qml.RZ(input_scaling[layer, i + len(x.T)] * feature, wires=[i])
+
+        for i, wire in enumerate(wires):
+            qml.RZ(weights[layer, i], wires=[wire])
+
+        for i, wire in enumerate(wires):
+            qml.RY(weights[layer, i + len(wires)], wires=[wire])
+
+        if len(wires) == 2:
+            qml.CNOT(wires=wires)
+        else:
+            for i in range(len(wires)):
+                qml.CNOT(wires=[wires[i], wires[(i + 1) % len(wires)]])
+
+    if agent_type == "actor":
+        return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+    elif agent_type == "critic":
+        return [qml.expval(qml.PauliX(0))]
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
-    def __init__(self, env):
+    def __init__(self, envs, config):
         super().__init__()
-        self.fc1 = nn.Linear(
-            np.array(env.single_observation_space.shape).prod()
-            + np.prod(env.single_action_space.shape),
-            256,
+        self.config = config
+        self.observation_size = np.array(envs.single_observation_space.shape).prod() + np.prod(envs.single_action_space.shape)
+        self.num_actions = np.prod(envs.single_action_space.shape)
+        self.num_qubits = config["num_qubits"]
+
+        assert (
+            self.num_qubits >= self.observation_size
+        ), "Number of qubits must be greater than or equal to the observation size"
+        assert (
+            self.num_qubits >= self.num_actions
+        ), "Number of qubits must be greater than or equal to the number of actions"
+
+        self.num_layers = config["num_layers"]
+        self.wires = range(self.num_qubits)
+
+        # input and output scaling are always initialized as ones
+        self.input_scaling = nn.Parameter(
+            torch.ones(self.num_layers, self.num_qubits * 2), requires_grad=True
         )
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
+        self.output_scaling = nn.Parameter(
+            torch.ones(self.num_actions), requires_grad=True
+        )
+        # trainable weights are initialized randomly between -pi and pi
+        self.weights = nn.Parameter(
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            requires_grad=True,
+        )
+
+        device = qml.device(config["device"], wires=self.wires)
+        self.quantum_circuit = qml.QNode(
+            hardware_efficient_ansatz,
+            device,
+            diff_method=config["diff_method"],
+            interface="torch",
+        )
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+        logits = self.quantum_circuit(
+            x,
+            self.input_scaling,
+            self.weights,
+            self.wires,
+            self.num_layers,
+            self.num_actions,
+            "critic"
+        )
+        logits = torch.stack(logits, dim=1)
+        logits = logits * self.output_scaling
+        return logits
 
 
 class Actor(nn.Module):
-    def __init__(self, env):
+    def __init__(self, envs, config):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc_mu = nn.Linear(256, np.prod(env.single_action_space.shape))
-        # action rescaling
+        self.config = config
+        self.observation_size = np.array(envs.single_observation_space.shape).prod() + np.prod(envs.single_action_space.shape)
+        self.num_actions = np.prod(envs.single_action_space.shape)
+        self.num_qubits = config["num_qubits"]
+
+        assert (
+            self.num_qubits >= self.observation_size
+        ), "Number of qubits must be greater than or equal to the observation size"
+        assert (
+            self.num_qubits >= self.num_actions
+        ), "Number of qubits must be greater than or equal to the number of actions"
+
+        self.num_layers = config["num_layers"]
+        self.wires = range(self.num_qubits)
+
+        # input and output scaling are always initialized as ones
+        self.input_scaling = nn.Parameter(
+            torch.ones(self.num_layers, self.num_qubits * 2), requires_grad=True
+        )
+        # trainable weights are initialized randomly between -pi and pi
+        self.weights = nn.Parameter(
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            requires_grad=True,
+        )
+
+        device = qml.device(config["device"], wires=self.wires)
+        self.quantum_circuit = qml.QNode(
+            hardware_efficient_ansatz,
+            device,
+            diff_method=config["diff_method"],
+            interface="torch",
+        )
         self.register_buffer(
             "action_scale",
             torch.tensor(
-                (env.action_space.high - env.action_space.low) / 2.0,
+                (envs.action_space.high - envs.action_space.low) / 2.0,
                 dtype=torch.float32,
             ),
         )
         self.register_buffer(
             "action_bias",
             torch.tensor(
-                (env.action_space.high + env.action_space.low) / 2.0,
+                (envs.action_space.high + envs.action_space.low) / 2.0,
                 dtype=torch.float32,
             ),
         )
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = torch.tanh(self.fc_mu(x))
-        return x * self.action_scale + self.action_bias
+        logits = self.quantum_circuit(
+            x,
+            self.input_scaling,
+            self.weights,
+            self.wires,
+            self.num_layers,
+            self.num_actions,
+            "actor"
+        )
+        logits = torch.stack(logits, dim=1)
+        return logits * self.action_scale + self.action_bias
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -91,19 +188,21 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-def ddpg_classical_continuous_action(config: dict):
+def ddpg_quantum_continuous_action(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
     buffer_size = config["buffer_size"]
     total_timesteps = config["total_timesteps"]
-    learning_rate = config["learning_rate"]
     gamma = config["gamma"]
     tau = config["tau"]
     batch_size = config["batch_size"]
     exploration_noise = config["exploration_noise"]
     learning_starts = config["learning_starts"]
     policy_frequency = config["policy_frequency"]
+    lr_input_scaling = config["lr_input_scaling"]
+    lr_weights = config["lr_weights"]
+    lr_output_scaling = config["lr_output_scaling"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -147,14 +246,25 @@ def ddpg_classical_continuous_action(config: dict):
         envs.single_action_space, gym.spaces.Box
     ), "only continuous action space is supported"
 
-    actor = Actor(envs).to(device)
-    qf1 = QNetwork(envs).to(device)
-    qf1_target = QNetwork(envs).to(device)
-    target_actor = Actor(envs).to(device)
+    actor = Actor(envs, config).to(device)
+    qf1 = QNetwork(envs, config).to(device)
+    qf1_target = QNetwork(envs, config).to(device)
+    target_actor = Actor(envs, config).to(device)
     target_actor.load_state_dict(actor.state_dict())
     qf1_target.load_state_dict(qf1.state_dict())
-    q_optimizer = optim.Adam(list(qf1.parameters()), lr=learning_rate)
-    actor_optimizer = optim.Adam(list(actor.parameters()), lr=learning_rate)
+    q_optimizer = optim.Adam(
+        [
+            {"params": qf1.input_scaling, "lr": lr_input_scaling},
+            {"params": qf1.output_scaling, "lr": lr_output_scaling},
+            {"params": qf1.weights, "lr": lr_weights},
+        ]
+    )
+    actor_optimizer = optim.Adam(
+        [
+            {"params": actor.input_scaling, "lr": lr_input_scaling},
+            {"params": actor.weights, "lr": lr_weights},
+        ]
+    )
 
     envs.single_observation_space.dtype = np.float32
     rb = ReplayBuffer(
@@ -282,7 +392,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ddpg_classical_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
@@ -293,14 +403,22 @@ if __name__ == "__main__":
         buffer_size: int = int(1e6)  # Replay buffer size
         learning_rate: float = 3e-4  # Learning rate
         num_envs: int = 1  # Number of environments
-        seed: int = None  # Seed for reproducibility
-        cuda: bool = False  # Cuda enabled
-        gamma: float = 0.99  # Discount factor
+        gamma: float = 0.99  # discount factor
         tau: float = 0.005  # Target network update rate
         batch_size: int = 256  # Batch size
         exploration_noise: float = 0.1  # Std of Gaussian exploration noise
         learning_starts: int = 25e3  # Timesteps before learning starts
         policy_frequency: int = 2  # Frequency of policy updates
+        seed: int = None  # Seed for reproducibility
+        lr_input_scaling: float = 0.01  # Learning rate for input scaling
+        lr_weights: float = 0.01  # Learning rate for variational parameters
+        lr_output_scaling: float = 0.01  # Learning rate for output scaling
+        cuda: bool = False  # Whether to use CUDA
+        num_qubits: int = 5  # Number of qubits
+        num_layers: int = 5  # Number of layers in the quantum circuit
+        device: str = "lightning.qubit"  # Quantum device
+        diff_method: str = "adjoint"  # Differentiation method
+        save_model: bool = True  # Save the model after the run
 
     config = vars(Config())
 
@@ -319,4 +437,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    ddpg_classical_continuous_action(config)
+    ddpg_quantum_continuous_action(config)

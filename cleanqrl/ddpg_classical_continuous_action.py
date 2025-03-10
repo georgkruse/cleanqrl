@@ -282,7 +282,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ddpg_classical_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
