@@ -79,7 +79,7 @@ class JumanjiWrapperTSP(gym.Wrapper):
                 )
                 # Set distance for both directions
                 pairwise_distances[idx] = distance
-        
+                idx +=1
         return pairwise_distances
 
     def tsp_compute_optimal_tour(self, nodes):
@@ -160,7 +160,7 @@ def graph_encoding_ansatz(
         for i in wires:
             qml.RX(annotations_converted[:, i], wires=i)
 
-    return [qml.expval(qml.PauliZ(i)) for i in range(num_actions)]
+    return [qml.expval(qml.PauliX(i)) for i in range(num_actions)]
 
 
 class DQNAgentQuantum(nn.Module):
@@ -180,14 +180,14 @@ class DQNAgentQuantum(nn.Module):
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
-            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
+            torch.ones(self.num_layers), requires_grad=True
         )
         self.output_scaling = nn.Parameter(
             torch.ones(self.num_actions), requires_grad=True
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.rand(self.num_layers) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
 

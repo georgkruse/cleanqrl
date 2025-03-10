@@ -19,7 +19,7 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
-from wrapper import ReplayBufferWrapper
+from cleanqrl.wrapper_jumanji import ReplayBufferWrapper
 
 
 def make_env(env_id, config):
