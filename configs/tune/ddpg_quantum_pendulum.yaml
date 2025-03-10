@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             reinforce_pendulum
+trial_name:             ddpg_pendulum
 wandb:                  True
 project_name:           cleanqrl
 
@@ -16,9 +16,8 @@ gpus_per_worker:        0
 env_id:   Pendulum-v1
 
 # algorithm parameters
-env_wrapper:        arctan
 seed:               None
-agent:              REINFORCE_quantum_continuous_action
+agent:              ddpg_quantum_continuous_action
 total_timesteps:    200000
 lr_input_scaling:   #0.025
   - grid_search
@@ -31,11 +30,14 @@ lr_weights:         #0.025
 lr_output_scaling:   0.1    
 num_envs:           1
 gamma:              0.9
-num_qubits:         3
+buffer_size:        100000
+batch_size:         16
+exploration_noise:  0.1
+learning_starts:    1000
+policy_frequency:   2
+tau:                0.005
+num_qubits:         5
 num_layers:         5
-ansatz:             hea
-init_method:        uniform
-observables:        global
 device:             lightning.qubit
 diff_method:        adjoint
 cuda: False
