@@ -2,6 +2,7 @@
 trial_path:             logs
 trial_name:             reinforce_pendulum
 wandb:                  True
+project_name:           cleanqrl
 
 # ray tune parameters
 ray_local_mode:         False
@@ -17,16 +18,16 @@ env_id:   Pendulum-v1
 # algorithm parameters
 env_wrapper:        arctan
 seed:               None
-agent:              REINFORCE_quantum_continuous
+agent:              REINFORCE_quantum_continuous_action
 total_timesteps:    200000
 lr_input_scaling:   #0.025
   - grid_search
   - float
-  - [0.01, 0.0025]  
+  - [0.0025, 0.001]  
 lr_weights:         #0.025
   - grid_search
   - float
-  - [0.01, 0.0025]     
+  - [0.0025, 0.001]     
 lr_output_scaling:   0.1    
 num_envs:           1
 gamma:              0.9

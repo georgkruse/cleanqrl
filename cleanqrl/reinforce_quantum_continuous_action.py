@@ -33,23 +33,23 @@ def make_env(env_id=None):
 
     return thunk
 
-
 def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
         for i, feature in enumerate(x.T):
-            qml.RX(input_scaling[layer, i] * feature, wires=[i])
+            qml.RY(input_scaling[layer, i] * feature, wires=[i])
+            qml.RZ(input_scaling[layer, i + len(x.T)] * feature, wires=[i])
 
         for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires=[wire])
+            qml.RZ(weights[layer, i], wires=[wire])
 
         for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
+            qml.RY(weights[layer, i + len(wires)], wires=[wire])
 
         if len(wires) == 2:
-            qml.CZ(wires=wires)
+            qml.CNOT(wires=wires)
         else:
             for i in range(len(wires)):
-                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
+                qml.CNOT(wires=[wires[i], wires[(i + 1) % len(wires)]])
 
     return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
 
@@ -73,7 +73,7 @@ class ReinforceAgentQuantumContinuous(nn.Module):
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
-            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
+            torch.ones(self.num_layers, self.num_qubits * 2), requires_grad=True
         )
         self.output_scaling = nn.Parameter(
             torch.ones(self.num_actions), requires_grad=True

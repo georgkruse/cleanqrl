@@ -18,7 +18,6 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
-from wrapper import ArctanNormalizationWrapper
 
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
