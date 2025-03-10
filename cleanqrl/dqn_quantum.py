@@ -21,14 +21,14 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer
-from wrapper import ReplayBufferWrapper
+from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
 
 
-def make_env(env_id, config):
+def make_env(env_id):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -188,7 +188,7 @@ def dqn_quantum(config: dict):
     ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv([make_env(env_id) for i in range(num_envs)])
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"

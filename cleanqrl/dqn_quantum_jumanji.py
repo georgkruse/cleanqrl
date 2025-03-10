@@ -20,8 +20,8 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from replay_buffer import ReplayBuffer
-from wrapper import ReplayBufferWrapper, create_jumanji_env
+from replay_buffer import ReplayBuffer, ReplayBufferWrapper
+from cleanqrl.wrapper_jumanji import create_jumanji_env
 
 
 def make_env(env_id, config):

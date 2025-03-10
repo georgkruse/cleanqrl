@@ -172,15 +172,6 @@ class JumanjiWrapperMaze(gym.Wrapper):
         self.previous_state = state
         return state, reward, False, truncate, info
 
-class ReplayBufferWrapper(gym.Wrapper):
-    def step(self, action):
-        state, reward, terminate, truncate, info = self.env.step(action)
-        if truncate or terminate:
-            info["final_observation"] = deepcopy(self.previous_state)
-        self.previous_state = state
-
-        return state, reward, terminate, truncate, info
-
 
 def create_jumanji_env(env_id, config):
     if env_id == "TSP-v1":
