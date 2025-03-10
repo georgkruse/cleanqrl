@@ -46,6 +46,7 @@ from cleanqrl.reinforce_quantum_continuous_action import (
 from cleanqrl.reinforce_quantum_discrete_state import reinforce_quantum_discrete_state
 from cleanqrl.reinforce_quantum_jumanji import reinforce_quantum_jumanji
 from cleanqrl.ddpg_classical_continuous_action import ddpg_classical_continuous_action
+from cleanqrl.ddpg_quantum_continuous_action import ddpg_quantum_continuous_action
 
 
 agent_switch = {
@@ -64,6 +65,7 @@ agent_switch = {
     "dqn_quantum_discrete_state": dqn_quantum_discrete_state,
     "dqn_quantum_jumanji": dqn_quantum_jumanji,
     "ddpg_classical_continuous_action": ddpg_classical_continuous_action,
+    "ddpg_quantum_continuous_action": ddpg_quantum_continuous_action,
     "reinforce_classical": reinforce_classical,
     "reinforce_classical_continuous_action": reinforce_classical_continuous_action,
     "reinforce_classical_discrete_state": reinforce_classical_discrete_state,

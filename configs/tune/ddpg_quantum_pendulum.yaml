@@ -17,7 +17,7 @@ env_id:   Pendulum-v1
 
 # algorithm parameters
 seed:               None
-agent:              ddpg_classical_continuous_action
+agent:              ddpg_quantum_continuous_action
 total_timesteps:    200000
 lr_input_scaling:   #0.025
   - grid_search
