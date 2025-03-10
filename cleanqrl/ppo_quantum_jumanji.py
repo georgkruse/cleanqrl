@@ -19,7 +19,7 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
-from cleanqrl.wrapper_jumanji import create_jumanji_env
+from wrapper_jumanji import create_jumanji_env
 
 
 def make_env(env_id, config):
