@@ -41,7 +41,7 @@ class QuantumPGModel(TorchModelV2, nn.Module, ABC):
         if isinstance(self.obs_space, gym.spaces.Dict):
             self.num_inputs = sum([box.shape[0] for box in self.obs_space.values()])
         elif isinstance(self.obs_space, gym.spaces.Discrete):
-            self.num_inputs = self.obs_space.n
+            self.num_inputs = self.obs_space.n-1
         else:
             self.num_inputs = self.obs_space.shape[0]
 

@@ -15,7 +15,7 @@ from utils.config.create_config import create_config as crt_cfg
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="This is the runfile for the open source baseline repo.")
-    parser.add_argument("--path", default= "configs/qpg/qpg_maze3x3.yml", 
+    parser.add_argument("--path", default= "configs/qpg/qpg_frozenlake4x4.yml", 
                         metavar="FILE", help="path to alg config file", type=str)
     parser.add_argument("--test", default='None', type=str)
     args = parser.parse_args()

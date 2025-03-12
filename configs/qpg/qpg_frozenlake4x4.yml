@@ -1,5 +1,5 @@
 type:                             QRL                   # choose a type: RL, GA, Hypernetwork (DEPRECATED)
-alg:                              QPG+                  # name of the algorithm
+alg:                              QPG                  # name of the algorithm
 seed:                             42                    # seed for ray alogorithms/tensorflow/pytorch for reproduceabel results
 constant_seed:                    False                 # setting the same seed accross all runs
 checkpoint_at_end:                True                  # create checkpoint at the end of training
@@ -8,7 +8,7 @@ ray_local_mode:                   False                  # set local_mode of ray
 ray_logging_path:                 logs/paper/binary/frozenlake4x4/qpg         # logging directory
 total_num_cpus:                   20                    # total number of cpus
 total_num_gpus:                   0                     # total number of gpus
-ray_num_trial_samples:            10                     # number of hyperparameter combinations (trials) to run (works differently for grid_search)
+ray_num_trial_samples:            1                     # number of hyperparameter combinations (trials) to run (works differently for grid_search)
 training_iterations:              100                  # number of training iterations
 run_sections:                                           # specify the sections ['qrl_training' and 'plotting']
                                 - qrl_training          
@@ -56,7 +56,7 @@ algorithm_config:                                       # config for QRL trainin
   backend_name:                   lightning.qubit       # select pennylane backend [lightning.qubit, default.qubit, ...]
   custom_optimizer:               Adam                  # select the classical optimizer [Adam, RMSprop, LBFGS, ...] 
   ###########################################################################
-  vqc_type:                       [vqc_generator, 5]    # select vqc_generator or other circuit generator function + number of qubits
+  vqc_type:                       [vqc_generator, 4]    # select vqc_generator or other circuit generator function + number of qubits
   use_hadamard:                   True                  # Create equal superposition in the beginning
   block_sequence:                 enc_var_ent           # select the block sequence, enc_var_ent == classical hea ansatz, graph_encoding only needs enc
     # - grid_search

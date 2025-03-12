@@ -53,7 +53,7 @@ class MazeGame(Env):
             self.obs_size = int(self.maze_size_y*self.maze_size_x)
 
             if self.state_encoding == 'binary':
-                num_bits = (self.maze_size_x*self.maze_size_y).bit_length() 
+                num_bits = (self.maze_size_x*self.maze_size_y-1).bit_length() 
                 self.observation_space = Box(-np.inf, np.inf, shape = (num_bits,))
             elif self.state_encoding == 'onehot':
                 self.observation_space = Box(-np.inf, np.inf, shape = (self.maze_size_x*self.maze_size_y,))            
@@ -78,7 +78,7 @@ class MazeGame(Env):
             self.obs_size = int(self.maze_size_y*self.maze_size_x)
 
             if self.state_encoding == 'binary':
-                num_bits = (env.observation_space.n).bit_length()  # Number of bits needed to represent the maximum index
+                num_bits = int((env.observation_space.n-1)).bit_length()  # Number of bits needed to represent the maximum index
                 self.observation_space = Box(-np.inf, np.inf, shape = (num_bits,))
             elif self.state_encoding == 'onehot':
                 self.observation_space = Box(-np.inf, np.inf, shape = (self.maze_size_x*self.maze_size_y,)) 
@@ -120,7 +120,7 @@ class MazeGame(Env):
             self.obs_size = int(self.maze_size_y*self.maze_size_x)
 
             if self.state_encoding == 'binary':
-                num_bits = (env.observation_space.n).bit_length()  # Number of bits needed to represent the maximum index
+                num_bits = int((env.observation_space.n)).bit_length()  # Number of bits needed to represent the maximum index
                 self.observation_space = Box(-np.inf, np.inf, shape = (num_bits,))
             elif self.state_encoding == 'onehot':
                 self.observation_space = Box(-np.inf, np.inf, shape = (self.maze_size_x*self.maze_size_y,)) 
@@ -208,7 +208,7 @@ class MazeGame(Env):
         if self.state_encoding == 'binary':
             index_of_one = np.argmax(np.reshape(self.current_obs, (-1)))  # Returns the index of the first occurrence of 1
             # Determine the number of bits needed to represent the index based on the array size
-            num_bits = len(np.reshape(self.current_obs, (-1))).bit_length()  # Number of bits needed to represent the maximum index
+            num_bits = (len(np.reshape(self.current_obs, (-1)))-1).bit_length()  # Number of bits needed to represent the maximum index
             # Convert the index to binary string representation with leading zeros to fit the bit length
             binary_rep = format(index_of_one, f'0{num_bits}b')
             state = np.array([int(char) for char in binary_rep], dtype=int)
@@ -320,7 +320,7 @@ class MazeGame(Env):
         if self.state_encoding == 'binary':
             index_of_one = np.argmax(np.reshape(self.current_obs, (-1)))  # Returns the index of the first occurrence of 1
             # Determine the number of bits needed to represent the index based on the array size
-            num_bits = len(np.reshape(self.current_obs, (-1))).bit_length()  # Number of bits needed to represent the maximum index
+            num_bits = (len(np.reshape(self.current_obs, (-1)))-1).bit_length()  # Number of bits needed to represent the maximum index
             # Convert the index to binary string representation with leading zeros to fit the bit length
             binary_rep = format(index_of_one, f'0{num_bits}b')
             state = np.array([int(char) for char in binary_rep], dtype=int)
