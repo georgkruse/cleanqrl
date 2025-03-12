@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             dqn_cartpole
+trial_name:             dqn_frozenlake
 wandb:                  True
 project_name:           cleanqrl
 
@@ -13,10 +13,10 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   CartPole-v1
+env_id:   FrozenLake-v1
 
 # algorithm parameters
-agent:               DQN_quantum
+agent:              dqn_quantum_discrete_state
 total_timesteps:    200000
 learning_rate:      0.001
 num_envs:           1
@@ -24,13 +24,13 @@ seed:               None
 buffer_size:        10000
 gamma:              0.99
 tau:                1.0
-target_network_frequency:  1
-batch_size:         16
+target_network_frequency:   250
+batch_size:         32
 start_e:            1
 end_e:              0.01
-exploration_fraction:   0.5
+exploration_fraction:   0.35
 learning_starts:        1000
-train_frequency:        3
+train_frequency:        5
 
 lr_input_scaling:   #0.001  
   - grid_search
@@ -44,6 +44,7 @@ lr_output_scaling:   0.1
 num_qubits:         4
 num_layers:         5
 device:             lightning.qubit
+state_encoding:     binary
 diff_method:        adjoint
 cuda: False
 save_model: True

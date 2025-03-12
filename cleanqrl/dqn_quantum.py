@@ -41,7 +41,7 @@ def make_env(env_id):
     return thunk
 
 
-def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions):
+def parametrized_quantum_circuit(x, input_scaling, weights, wires, layers, num_actions):
     for layer in range(layers):
         for i, feature in enumerate(x.T):
             qml.RX(input_scaling[layer, i] * feature, wires=[i])
@@ -94,7 +94,7 @@ class DQNAgentQuantum(nn.Module):
 
         device = qml.device(config["device"], wires=self.wires)
         self.quantum_circuit = qml.QNode(
-            hardware_efficient_ansatz,
+            parametrized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",

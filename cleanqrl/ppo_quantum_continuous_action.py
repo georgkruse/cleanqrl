@@ -44,7 +44,7 @@ def make_env(env_id, config):
     return thunk
 
 
-def hardware_efficient_ansatz(x, input_scaling, weights, wires, layers, num_actions, agent_type):
+def parametrized_quantum_circuit(x, input_scaling, weights, wires, layers, num_actions, agent_type):
     for layer in range(layers):
         for i, feature in enumerate(x.T):
             qml.RY(input_scaling[layer, i] * feature, wires=[i])
@@ -116,7 +116,7 @@ class PPOAgentQuantumContinuous(nn.Module):
 
         device = qml.device(config["device"], wires=self.wires)
         self.quantum_circuit = qml.QNode(
-            hardware_efficient_ansatz,
+            parametrized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",
