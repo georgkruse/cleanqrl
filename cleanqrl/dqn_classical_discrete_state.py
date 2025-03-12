@@ -21,9 +21,9 @@ from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
-def make_env(env_id):
+def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id)
+        env = gym.make(env_id, is_slippery=config['is_slippery'])
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
 
@@ -283,17 +283,17 @@ if __name__ == "__main__":
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
-        buffer_size: int = 10000  # Size of the replay buffer
+        buffer_size: int = 1000  # Size of the replay buffer
         total_timesteps: int = 100000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration
-        end_e: float = 0.01  # Ending value of epsilon for exploration
+        end_e: float = 0.05  # Ending value of epsilon for exploration
         exploration_fraction: float = 0.1  # Fraction of total timesteps for exploration
         learning_starts: int = 1000  # Timesteps before learning starts
         train_frequency: int = 1  # Frequency of training
         batch_size: int = 32  # Batch size for training
-        gamma: float = 0.99  # Discount factor
-        target_network_frequency: int = 100  # Frequency of target network updates
-        tau: float = 0.01  # Soft update coefficient
+        gamma: float = 0.95  # Discount factor
+        target_network_frequency: int = 10  # Frequency of target network updates
+        tau: float = 0.9  # Soft update coefficient
         lr: float = 0.01  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
         save_model: bool = True  # Save the model after the run

@@ -20,33 +20,33 @@ from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
 
-def make_env(env_id, config=None):
+def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id)
+        env = gym.make(env_id, is_slippery=False)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
     return thunk
 
 
-def parametrized_quantum_circuit(x, input_scaling, weights, wires, layers, num_actions):
-    for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+    for layer in range(num_layers):
+        for i in range(observation_size):
+            qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires=[wire])
+        for i in range(num_qubits):
+            qml.RZ(weights[layer, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
+        for i in range(num_qubits):
+            qml.RY(weights[layer, i + num_qubits], wires=[i])
 
-        if len(wires) == 2:
-            qml.CZ(wires=wires)
+        if num_qubits == 2:
+            qml.CZ(wires=[0, 1])
         else:
-            for i in range(len(wires)):
-                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
+            for i in range(num_qubits):
+                qml.CZ(wires=[i, (i + 1) % num_qubits])
 
-    return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+    return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
 class ReinforceAgentQuantum(nn.Module):
@@ -62,6 +62,7 @@ class ReinforceAgentQuantum(nn.Module):
 
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
 
         assert (
             self.num_qubits >= self.observation_size
@@ -69,9 +70,6 @@ class ReinforceAgentQuantum(nn.Module):
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
-
-        self.num_layers = config["num_layers"]
-        self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -82,13 +80,13 @@ class ReinforceAgentQuantum(nn.Module):
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.rand(self.num_layers, self.num_qubits * 2) * 0.1,
             requires_grad=True,
         )
 
-        device = qml.device(config["device"], wires=self.wires)
+        device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
-            parametrized_quantum_circuit,
+            parameterized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",
@@ -100,14 +98,18 @@ class ReinforceAgentQuantum(nn.Module):
             x_encoded,
             self.input_scaling,
             self.weights,
-            self.wires,
+            self.num_qubits,
             self.num_layers,
             self.num_actions,
+            self.observation_size
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
+        softmax = nn.Softmax(dim=-1)
+        logits = softmax(logits)
         probs = Categorical(logits=logits)
         action = probs.sample()
+        # print(action)
         return action, probs.log_prob(action)
 
     def encode_input(self, x):
@@ -121,7 +123,7 @@ class ReinforceAgentQuantum(nn.Module):
             for i, val in enumerate(x):
                 binary = bin(int(val.item()))[2:]
                 padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
+                x_binary[i] = torch.tensor([int(bit) for bit in padded])
             return x_binary
 
 
@@ -186,7 +188,7 @@ def reinforce_quantum_discrete_state(config):
     ), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for _ in range(num_envs)],
+        [make_env(env_id, config) for _ in range(num_envs)],
     )
 
     assert isinstance(
@@ -209,7 +211,7 @@ def reinforce_quantum_discrete_state(config):
     # global parameters to log
     global_step = 0
     global_episodes = 0
-    print_interval = 50
+    print_interval = 10
     episode_returns = deque(maxlen=print_interval)
 
     # TRY NOT TO MODIFY: start the game
@@ -301,23 +303,24 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "reinforce_quantum_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
+        is_slippery: bool = False 
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
-        total_timesteps: int = 100000  # Total number of timesteps
-        gamma: float = 0.99  # discount factor
-        lr_input_scaling: float = 0.01  # Learning rate for input scaling
-        lr_weights: float = 0.01  # Learning rate for variational parameters
-        lr_output_scaling: float = 0.01  # Learning rate for output scaling
+        total_timesteps: int = 20000  # Total number of timesteps
+        gamma: float = 0.9  # discount factor
+        lr_input_scaling: float = 0.025  # Learning rate for input scaling
+        lr_weights: float = 0.025  # Learning rate for variational parameters
+        lr_output_scaling: float = 0.025  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 4  # Number of qubits
-        num_layers: int = 4  # Number of layers in the quantum circuit
+        num_layers: int = 5  # Number of layers in the quantum circuit
         device: str = "lightning.qubit"  # Quantum device
         diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run

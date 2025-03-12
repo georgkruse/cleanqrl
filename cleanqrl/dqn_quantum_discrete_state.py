@@ -23,9 +23,9 @@ from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
-def make_env(env_id):
+def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id)
+        env = gym.make(env_id, is_slippery=config['is_slippery'])
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
 
@@ -34,24 +34,24 @@ def make_env(env_id):
     return thunk
 
 
-def parametrized_quantum_circuit(x, input_scaling, weights, wires, layers, num_actions):
-    for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RX(input_scaling[layer, i] * x[:, i], wires=[wire])
+def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+    for layer in range(num_layers):
+        for i in range(observation_size):
+            qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires=[wire])
+        for i in range(num_qubits):
+            qml.RY(weights[layer, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
+        for i in range(num_qubits):
+            qml.RZ(weights[layer, i + num_qubits], wires=[i])
 
-        if len(wires) == 2:
-            qml.CZ(wires=wires)
+        if num_qubits == 2:
+            qml.CZ(wires=[0, 1])
         else:
-            for i in range(len(wires)):
-                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
+            for i in range(num_qubits):
+                qml.CZ(wires=[i, (i + 1) % num_qubits])
 
-    return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+    return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
 class DQNAgentQuantum(nn.Module):
@@ -67,6 +67,7 @@ class DQNAgentQuantum(nn.Module):
 
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
 
         assert (
             self.num_qubits >= self.observation_size
@@ -74,9 +75,6 @@ class DQNAgentQuantum(nn.Module):
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
-
-        self.num_layers = config["num_layers"]
-        self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -91,9 +89,9 @@ class DQNAgentQuantum(nn.Module):
             requires_grad=True,
         )
 
-        device = qml.device(config["device"], wires=self.wires)
+        device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
-            parametrized_quantum_circuit,
+            parameterized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",
@@ -105,9 +103,10 @@ class DQNAgentQuantum(nn.Module):
             x_encoded,
             self.input_scaling,
             self.weights,
-            self.wires,
+            self.num_qubits,
             self.num_layers,
             self.num_actions,
+            self.observation_size
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
@@ -201,7 +200,7 @@ def dqn_quantum_discrete_state(config: dict):
     ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
@@ -227,7 +226,7 @@ def dqn_quantum_discrete_state(config: dict):
     start_time = time.time()
 
     # global parameters to log
-    print_interval = 50
+    print_interval = 10
     global_episodes = 0
     episode_returns = deque(maxlen=print_interval)
 
@@ -329,34 +328,35 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "dqn_quantum_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
+        is_slippery: bool = False 
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
-        buffer_size: int = 10000  # Size of the replay buffer
-        total_timesteps: int = 10000  # Total number of timesteps
+        buffer_size: int = 1000  # Size of the replay buffer
+        total_timesteps: int = 20000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration
-        end_e: float = 0.01  # Ending value of epsilon for exploration
-        exploration_fraction: float = 0.1  # Fraction of total timesteps for exploration
-        learning_starts: int = 1000  # Timesteps before learning starts
-        train_frequency: int = 1  # Frequency of training
+        end_e: float = 0.05  # Ending value of epsilon for exploration
+        exploration_fraction: float = 0.5  # Fraction of total timesteps for exploration
+        learning_starts: int = 100  # Timesteps before learning starts
+        train_frequency: int = 10  # Frequency of training
         batch_size: int = 32  # Batch size for training
-        gamma: float = 0.99  # Discount factor
-        target_network_frequency: int = 100  # Frequency of target network updates
-        tau: float = 0.01  # Soft update coefficient
+        gamma: float = 0.95  # Discount factor
+        target_network_frequency: int = 10  # Frequency of target network updates
+        tau: float = 0.9  # Soft update coefficient
         lr_input_scaling: float = 0.01  # Learning rate for input scaling
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 4  # Number of qubits
-        num_layers: int = 2  # Number of layers in the quantum circuit
-        device: str = "default.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
+        num_layers: int = 5  # Number of layers in the quantum circuit
+        device: str = "lightning.qubit"  # Quantum device
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
         state_encoding: str = (
             "binary"  # Type of state encoding, either "binary" or "onehot"
