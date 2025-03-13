@@ -23,7 +23,7 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
 
-def make_env(env_id=None):
+def make_env(env_id=None, cofig = None):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
