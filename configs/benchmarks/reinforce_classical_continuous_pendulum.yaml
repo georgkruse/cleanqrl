@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             reinforce_cartpole_classical
+trial_name:             reinforce_pendulum_classical
 wandb:                  True
 project_name:           cleanqrl
 
@@ -13,12 +13,13 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   CartPole-v1
+env_id:   Pendulum-v1
 
 # algorithm parameters
-agent:              REINFORCE_classical
+seed:               42
+agent:              REINFORCE_classical_continuous_action
 total_timesteps:    200000
-lr:                 0.001
+lr:                 0.01
 num_envs:           2
 seed:               42
 gamma:              0.99
