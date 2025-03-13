@@ -12,7 +12,7 @@ from cleanqrl_utils.train import train_agent
 
 if __name__ == "__main__":
     # Specify the path to the config file
-    config_path = "configs/tune/reinforce_quantum_frozenlake.yaml"
+    config_path = "configs/benchmarks/ppo_pendulum_classical.yaml"
 
     # Load the config file
     with open(config_path) as f:
