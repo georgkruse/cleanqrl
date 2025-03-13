@@ -20,10 +20,12 @@ import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
+
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
     
+
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
@@ -34,28 +36,30 @@ def make_env(env_id, config):
 
     return thunk
 
-def parametrized_quantum_circuit(x, input_scaling, weights, wires, layers, num_actions, agent_type):
-    for layer in range(layers):
-        for i, feature in enumerate(x.T):
-            qml.RY(input_scaling[layer, i] * feature, wires=[i])
-            qml.RZ(input_scaling[layer, i + len(x.T)] * feature, wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i], wires=[wire])
+def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size, agent_type):
+    for layer in range(num_layers):
+        for i in range(observation_size):
+            qml.RY(input_scaling[layer, i] * x[i], wires=[i])
+            qml.RZ(input_scaling[layer, i + observation_size] * x[i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i + len(wires)], wires=[wire])
+        for i in range(num_qubits):
+            qml.RZ(weights[layer, i], wires=[i])
 
-        if len(wires) == 2:
-            qml.CNOT(wires=wires)
+        for i in range(num_qubits):
+            qml.RY(weights[layer, i + num_qubits], wires=[i])
+
+        if num_qubits == 2:
+            qml.CNOT(wires=[0, 1])
         else:
-            for i in range(len(wires)):
-                qml.CNOT(wires=[wires[i], wires[(i + 1) % len(wires)]])
+            for i in range(num_qubits):
+                qml.CNOT(wires=[i, (i + 1) % num_qubits])
 
     if agent_type == "actor":
-        return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+        return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
     elif agent_type == "critic":
         return [qml.expval(qml.PauliX(0))]
+    
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
@@ -65,6 +69,7 @@ class QNetwork(nn.Module):
         self.observation_size = np.array(envs.single_observation_space.shape).prod() + np.prod(envs.single_action_space.shape)
         self.num_actions = np.prod(envs.single_action_space.shape)
         self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
 
         assert (
             self.num_qubits >= self.observation_size
@@ -72,9 +77,6 @@ class QNetwork(nn.Module):
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
-
-        self.num_layers = config["num_layers"]
-        self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -89,9 +91,9 @@ class QNetwork(nn.Module):
             requires_grad=True,
         )
 
-        device = qml.device(config["device"], wires=self.wires)
+        device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
-            parametrized_quantum_circuit,
+            parameterized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",
@@ -103,9 +105,10 @@ class QNetwork(nn.Module):
             x,
             self.input_scaling,
             self.weights,
-            self.wires,
+            self.num_qubits,
             self.num_layers,
             self.num_actions,
+            self.observation_size,
             "critic"
         )
         logits = torch.stack(logits, dim=1)
@@ -120,6 +123,7 @@ class Actor(nn.Module):
         self.observation_size = np.array(envs.single_observation_space.shape).prod() + np.prod(envs.single_action_space.shape)
         self.num_actions = np.prod(envs.single_action_space.shape)
         self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
 
         assert (
             self.num_qubits >= self.observation_size
@@ -128,8 +132,6 @@ class Actor(nn.Module):
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
 
-        self.num_layers = config["num_layers"]
-        self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -141,9 +143,9 @@ class Actor(nn.Module):
             requires_grad=True,
         )
 
-        device = qml.device(config["device"], wires=self.wires)
+        device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
-            parametrized_quantum_circuit,
+            parameterized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",
@@ -168,9 +170,10 @@ class Actor(nn.Module):
             x,
             self.input_scaling,
             self.weights,
-            self.wires,
+            self.num_qubits,
             self.num_layers,
             self.num_actions,
+            self.observation_size,
             "actor"
         )
         logits = torch.stack(logits, dim=1)

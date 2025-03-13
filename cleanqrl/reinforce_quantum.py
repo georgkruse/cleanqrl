@@ -19,11 +19,13 @@ import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
+
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
 
-def make_env(env_id, config=None):
+
+def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -34,24 +36,24 @@ def make_env(env_id, config=None):
     return thunk
 
 
-def parametrized_quantum_circuit(x, input_scaling, weights, wires, layers, num_actions):
-    for layer in range(layers):
-        for i, feature in enumerate(x.T):
-            qml.RX(input_scaling[layer, i] * feature, wires=[i])
+def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+    for layer in range(num_layers):
+        for i in range(observation_size):
+            qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RY(weights[layer, i], wires=[wire])
+        for i in range(num_qubits):
+            qml.RY(weights[layer, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i + len(wires)], wires=[wire])
+        for i in range(num_qubits):
+            qml.RZ(weights[layer, i + num_qubits], wires=[i])
 
-        if len(wires) == 2:
-            qml.CZ(wires=wires)
+        if num_qubits == 2:
+            qml.CZ(wires=[0, 1])
         else:
-            for i in range(len(wires)):
-                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
+            for i in range(num_qubits):
+                qml.CZ(wires=[i, (i + 1) % num_qubits])
 
-    return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
+    return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
 class ReinforceAgentQuantum(nn.Module):
@@ -61,6 +63,7 @@ class ReinforceAgentQuantum(nn.Module):
         self.observation_size = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
 
         assert (
             self.num_qubits >= self.observation_size
@@ -68,9 +71,6 @@ class ReinforceAgentQuantum(nn.Module):
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
-
-        self.num_layers = config["num_layers"]
-        self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -85,9 +85,9 @@ class ReinforceAgentQuantum(nn.Module):
             requires_grad=True,
         )
 
-        device = qml.device(config["device"], wires=self.wires)
+        device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
-            parametrized_quantum_circuit,
+            parameterized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",
@@ -98,9 +98,10 @@ class ReinforceAgentQuantum(nn.Module):
             x,
             self.input_scaling,
             self.weights,
-            self.wires,
+            self.num_qubits,
             self.num_layers,
             self.num_actions,
+            self.observation_size
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
