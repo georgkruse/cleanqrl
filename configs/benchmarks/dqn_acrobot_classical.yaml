@@ -2,13 +2,14 @@
 trial_path:             logs
 trial_name:             dqn_acrobot_classical
 wandb:                  True
+project_name:           cleanqrl
 
 # ray tune parameters
 ray_local_mode:         False
-num_cpus:               10
+num_cpus:               1
 num_gpus:               0
-ray_num_trial_samples:  10
-cpus_per_worker:        3
+ray_num_trial_samples:  1
+cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
@@ -19,7 +20,7 @@ agent:                DQN_classical
 total_timesteps:      500000
 lr:                   2.5e-4
 num_envs:           1
-seed:               None
+seed:               42
 buffer_size:        10000
 gamma:              0.99
 tau:                1.0

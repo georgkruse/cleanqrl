@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             ppo_acrobot_classical
+trial_name:             ppo_pendulum
 wandb:                  True
 project_name:           cleanqrl
 
@@ -13,14 +13,13 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   Acrobot-v1
+env_id:   Pendulum-v1
 
 # algorithm parameters
-agent:               PPO_classical
-total_timesteps:    200000
-learning_rate:      0.001
-num_envs:           2
+agent:              PPO_quantum_continuous_action
 seed:               42
+total_timesteps:    200000
+num_envs:           5
 num_steps:          128
 anneal_lr:          True
 gamma:              0.99
@@ -34,8 +33,15 @@ ent_coef:           0.01
 vf_coef:            0.5
 max_grad_norm:      0.5
 target_kl:          None
-cuda: False
-save_model: True
-wandb: True
 
+lr_input_scaling:   0.025 
+lr_weights:         0.025   
+lr_output_scaling:   0.1   
+num_qubits:         3
+num_layers:         5
+device:             lightning.qubit
+diff_method:        adjoint
+
+
+cuda: False
 

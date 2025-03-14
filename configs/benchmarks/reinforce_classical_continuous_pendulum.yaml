@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             ppo_acrobot_classical
+trial_name:             reinforce_pendulum_classical
 wandb:                  True
 project_name:           cleanqrl
 
@@ -13,29 +13,15 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   Acrobot-v1
+env_id:   Pendulum-v1
 
 # algorithm parameters
-agent:               PPO_classical
+seed:               42
+agent:              REINFORCE_classical_continuous_action
 total_timesteps:    200000
-learning_rate:      0.001
+lr:                 0.01
 num_envs:           2
 seed:               42
-num_steps:          128
-anneal_lr:          True
 gamma:              0.99
-gae_lambda:         0.95
-num_minibatches:    4
-update_epochs:      4
-norm_adv:           True
-clip_coef:          0.2
-clip_vloss:         True
-ent_coef:           0.01
-vf_coef:            0.5
-max_grad_norm:      0.5
-target_kl:          None
 cuda: False
 save_model: True
-wandb: True
-
-
