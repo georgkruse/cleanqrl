@@ -342,8 +342,8 @@ if __name__ == "__main__":
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 4  # Number of qubits
         num_layers: int = 2  # Number of layers in the quantum circuit
-        device: str = "default.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
+        device: str = "lightning.qubit"  # Quantum device
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
 
     config = vars(Config())

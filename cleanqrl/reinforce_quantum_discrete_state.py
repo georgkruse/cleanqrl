@@ -14,7 +14,7 @@ import ray
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import wandb
+# import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
@@ -22,7 +22,7 @@ from torch.distributions.categorical import Categorical
 
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=False)
+        env = gym.make(env_id, is_slippery=config['is_slippery'], map_name=config['map_name'])
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
@@ -54,15 +54,17 @@ class ReinforceAgentQuantum(nn.Module):
         super().__init__()
         self.config = config
         self.state_encoding = config["state_encoding"]
+        self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
+        self.num_actions = envs.single_action_space.n
+        self.softmax = nn.Softmax(dim=-1)
 
         if self.state_encoding == "onehot":
             self.observation_size = envs.single_observation_space.n
         elif self.state_encoding == "binary":
             self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
 
-        self.num_actions = envs.single_action_space.n
-        self.num_qubits = config["num_qubits"]
-        self.num_layers = config["num_layers"]
+
 
         assert (
             self.num_qubits >= self.observation_size
@@ -80,7 +82,7 @@ class ReinforceAgentQuantum(nn.Module):
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 0.1,
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
 
@@ -92,10 +94,11 @@ class ReinforceAgentQuantum(nn.Module):
             interface="torch",
         )
 
-    def get_action_and_logprob(self, x):
-        x_encoded = self.encode_input(x)
+
+    def forward(self, x):
+        x = self.encode_input(x)
         logits = self.quantum_circuit(
-            x_encoded,
+            x,
             self.input_scaling,
             self.weights,
             self.num_qubits,
@@ -104,13 +107,12 @@ class ReinforceAgentQuantum(nn.Module):
             self.observation_size
         )
         logits = torch.stack(logits, dim=1)
-        logits = logits * self.output_scaling
-        softmax = nn.Softmax(dim=-1)
-        logits = softmax(logits)
-        probs = Categorical(logits=logits)
-        action = probs.sample()
-        # print(action)
-        return action, probs.log_prob(action)
+        probs = logits * self.output_scaling
+        probs = self.softmax(probs)
+        m = Categorical(probs)
+        action = m.sample()
+        return action, m.log_prob(action)
+
 
     def encode_input(self, x):
         if self.state_encoding == "onehot":
@@ -123,7 +125,7 @@ class ReinforceAgentQuantum(nn.Module):
             for i, val in enumerate(x):
                 binary = bin(int(val.item()))[2:]
                 padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit) for bit in padded])
+                x_binary[i] = torch.tensor([int(bit)*np.pi for bit in padded])
             return x_binary
 
 
@@ -211,13 +213,12 @@ def reinforce_quantum_discrete_state(config):
     # global parameters to log
     global_step = 0
     global_episodes = 0
-    print_interval = 10
+    print_interval = 30
     episode_returns = deque(maxlen=print_interval)
 
     # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     obs, _ = envs.reset()
-    obs = torch.Tensor(obs).to(device)
 
     while global_step < total_timesteps:
         log_probs = []
@@ -226,39 +227,28 @@ def reinforce_quantum_discrete_state(config):
 
         # Episode loop
         while not done:
-            action, log_prob = agent.get_action_and_logprob(obs)
-            log_probs.append(log_prob)
-            obs, reward, terminations, truncations, infos = envs.step(
-                action.cpu().numpy()
-            )
+            obs = torch.Tensor(obs).to(device)            
+            action, log_prob = agent.forward(obs)
+            obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
             rewards.append(reward)
-            obs = torch.Tensor(obs).to(device)
+            log_probs.append(log_prob)
             done = np.any(terminations) or np.any(truncations)
-
-        global_episodes += 1
-
-        # Not sure about this?
+        
         global_step += len(rewards) * num_envs
 
-        # Calculate discounted rewards
+        # Compute the discounted rewards
         discounted_rewards = []
         cumulative_reward = 0
         for reward in reversed(rewards):
             cumulative_reward = reward + gamma * cumulative_reward
             discounted_rewards.insert(0, cumulative_reward)
+        discounted_rewards = [torch.tensor(Gt, dtype=torch.float32) for Gt in discounted_rewards]
 
-        # Normalize rewards
-        discounted_rewards = torch.tensor(np.array(discounted_rewards)).to(device)
-        discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (
-            discounted_rewards.std() + 1e-9
-        )
-
-        # Calculate policy gradient loss
+        # Compute the policy loss
         loss = torch.cat(
             [-log_prob * Gt for log_prob, Gt in zip(log_probs, discounted_rewards)]
         ).sum()
 
-        # Update the policy
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -308,16 +298,17 @@ if __name__ == "__main__":
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
-        is_slippery: bool = False 
+        is_slippery: bool = False # Whether the environment is slippery
+        map_name: str = "4x4"  # Map name for FrozenLake 
 
         # Algorithm parameters
-        num_envs: int = 1  # Number of environments
+        num_envs: int = 2  # Number of environments
         seed: int = None  # Seed for reproducibility
         total_timesteps: int = 20000  # Total number of timesteps
-        gamma: float = 0.9  # discount factor
+        gamma: float = 0.95  # discount factor
         lr_input_scaling: float = 0.025  # Learning rate for input scaling
         lr_weights: float = 0.025  # Learning rate for variational parameters
-        lr_output_scaling: float = 0.025  # Learning rate for output scaling
+        lr_output_scaling: float = 0.1  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 4  # Number of qubits
         num_layers: int = 5  # Number of layers in the quantum circuit

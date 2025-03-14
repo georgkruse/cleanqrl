@@ -103,7 +103,7 @@ class ReinforceAgentQuantum(nn.Module):
 
     def forward(self, state):
     
-        # state = state.unsqueeze(0)
+        state = state.unsqueeze(0)
         # state = torch.from_numpy(state).float().unsqueeze(0)
 
         logits = self.quantum_circuit(
@@ -240,10 +240,10 @@ def reinforce_quantum_discrete_state(config):
     config['legal_actions_type'] = 'restricted'
     config['map_name'] = '4x4'
     config['is_slippery'] = False
-    # envs = MazeGame(config)
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, config) for _ in range(num_envs)],
-    )
+    envs = MazeGame(config)
+    # envs = gym.vector.SyncVectorEnv(
+    #     [make_env(env_id, config) for _ in range(num_envs)],
+    # )
 
     # assert isinstance(
     #     envs.single_action_space, gym.spaces.Discrete
@@ -273,26 +273,14 @@ def reinforce_quantum_discrete_state(config):
     # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     obs, _ = envs.reset()
-    obs = torch.tensor(obs, dtype=torch.float32)
-
     x = 0
-    from copy import deepcopy
     while global_step < total_timesteps:
 
-        done = True
-        
-        steps_trained_epoch = 0
-        episodes_trained_epoch = 0
         rewards_epoch = []
-        policy_loss_epoch = []
-        env_steps_per_epoch = []
-        
+
         rewards_epoch_train = []
         log_probs_epoch_train = []
-        steps_per_episode = 0
-        rewards_episode = []
-        log_probs_episode = []
-        # state, _ = env.reset()
+
         steps_per_epoch = 0
         step = 0
         for _ in range(200):
@@ -302,81 +290,47 @@ def reinforce_quantum_discrete_state(config):
             done = False
             # Episode loop
             while not done:
+                obs = torch.tensor(obs, dtype=torch.float32)
+
                 action, log_prob = agent.forward(obs)
-                next_obs, reward, terminations, truncations, infos = envs.step(
-                    np.array([action])
-                )
-                # print(obs,action, next_obs, reward, terminations, truncations)
-                rewards_episode.append(deepcopy(reward))
-                log_probs_episode.append(log_prob)
-                obs = torch.tensor(deepcopy(next_obs), dtype=torch.float32)
+
+                obs, reward, terminations, truncations, infos = envs.step(np.array([action]))
+                rewards.append(reward)
+                log_probs.append(log_prob)
                 done = np.any(terminations) or np.any(truncations)
                 step +=1
                 x +=1
 
             if done or (step == steps_per_epoch-1):
                 if done or len(rewards_epoch) == 0:        
-                    rewards_epoch.append(np.sum(rewards_episode))
-                env_steps_per_epoch.append(steps_per_episode)
+                    rewards_epoch.append(np.sum(rewards))
                 if step == steps_per_epoch-1:
-                    rewards_epoch_train.append(torch.tensor(rewards_episode, dtype=torch.float32))
+                    rewards_epoch_train.append(torch.tensor(rewards, dtype=torch.float32))
                 else:
-                    rewards_epoch_train.append(discounted_rewards(rewards_episode))
-                log_probs_epoch_train.append(torch.cat(log_probs_episode))
-                # episodes_trained_total += 1            
-                # episodes_trained_epoch += 1
-                steps_per_episode = 0
-                rewards_episode = []
-                log_probs_episode = []
+                            # Calculate discounted rewards
+                    discounted_rewards = []
+                    cumulative_reward = 0
+                    for reward in reversed(rewards):
+                        cumulative_reward = reward + gamma * cumulative_reward
+                        discounted_rewards.insert(0, cumulative_reward)
+
+                    rewards_epoch_train.append(torch.tensor(discounted_rewards, dtype=torch.float32))
+                log_probs_epoch_train.append(torch.cat(log_probs))
+                
                 obs, _ = envs.reset()
-                obs = torch.tensor(obs, dtype=torch.float32)
 
             if step >= 199:
                 break
 
-        # for step in range(200):
-        #     x += 1
-        #     action, log_prob = agent.forward(state)
-        #     # action, log_prob = select_action(state)
-        #     next_state, reward, terminations, truncations, _ = env.step(action)            
-        #     state = next_state
-        #     done = np.any(terminations) or np.any(truncations)
-
-        #     rewards_episode.append(reward)
-        #     log_probs_episode.append(log_prob)
-
-        #     steps_per_episode += 1
-        #     steps_trained_epoch += 1
-        #     # steps_trained_total += 1
-
-        #     if done or (step == steps_per_epoch-1):
-        #         if done or len(rewards_epoch) == 0:        
-        #             rewards_epoch.append(np.sum(rewards_episode))
-        #         env_steps_per_epoch.append(steps_per_episode)
-        #         if step == steps_per_epoch-1:
-        #             rewards_epoch_train.append(torch.tensor(rewards_episode, dtype=torch.float32))
-        #         else:
-        #             rewards_epoch_train.append(discounted_rewards(rewards_episode))
-        #         log_probs_epoch_train.append(torch.cat(log_probs_episode))
-        #         # episodes_trained_total += 1            
-        #         # episodes_trained_epoch += 1
-        #         steps_per_episode = 0
-        #         rewards_episode = []
-        #         log_probs_episode = []
-        #         state, _ = env.reset()
         print(x, np.mean(rewards_epoch))
-        # policy_loss_episode = update_policy(normalize_rewards(rewards_epoch_train), torch.cat(log_probs_epoch_train))
 
         new_rewards = normalize_rewards(rewards_epoch_train)
         new_log_probs = torch.cat(log_probs_epoch_train)
         policy_loss = -(new_log_probs * new_rewards).sum()
-        # print(rewards.shape)
 
         optimizer.zero_grad()
         policy_loss.backward()
         optimizer.step()
-        # circuit_executions += log_probs.shape[0]*model.total_model_parameters
-        # print(log_probs.shape[0])
 
     if config["save_model"]:
         model_path = f"{os.path.join(report_path, name)}.cleanqrl_model"

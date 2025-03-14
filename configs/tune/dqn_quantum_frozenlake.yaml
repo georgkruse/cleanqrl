@@ -18,20 +18,19 @@ is_slippery: False
 
 # algorithm parameters
 agent:              dqn_quantum_discrete_state
-total_timesteps:    200000
-learning_rate:      0.001
+total_timesteps:    30000
 num_envs:           1
 seed:               None
-buffer_size:        10000
-gamma:              0.99
-tau:                1.0
-target_network_frequency:   250
+buffer_size:        1000
+gamma:              0.95
+tau:                0.9
+target_network_frequency:   10
 batch_size:         32
 start_e:            1
-end_e:              0.01
+end_e:              0.05
 exploration_fraction:   0.35
-learning_starts:        1000
-train_frequency:        5
+learning_starts:        100
+train_frequency:        10
 
 lr_input_scaling:   #0.001  
   - grid_search
@@ -41,7 +40,10 @@ lr_weights:   #0.001
   - grid_search
   - float
   - [0.001, 0.01]    
-lr_output_scaling:   0.1   
+lr_output_scaling:   
+  - grid_search
+  - float
+  - [0.001, 0.01]     
 num_qubits:         4
 num_layers:         5
 device:             lightning.qubit
