@@ -31,40 +31,35 @@ def make_env(env_id, config):
 
 
 def parametrized_quantum_circuit(
-    x, input_scaling, weights, wires, layers, num_actions, agent_type
+    x, input_scaling, weights, num_qubits, num_layers, num_actions
 ):
 
     # This block needs to be adapted depending on the environment.
     # The input vector is of shape [4*num_actions] for the Knapsack:
-    # action mask, selected items, values, weights
-    # There is probably no way of one ansatz for all jumnanji envs.
-    annotations = x[:, num_actions : num_actions * 2]
-    values_kp = x[:, num_actions * 2 : num_actions * 3]
-    weights_kp = x[:, -num_actions:]
+    # [action mask, selected items, values, weights]
 
-    for layer in range(layers):
-        for i, wire in enumerate(wires):
-            qml.RY(input_scaling[layer, i] * values_kp[:, i], wires=[wire])
+    annotations = x[:, num_qubits : num_qubits * 2]
+    values_kp = x[:, num_qubits * 2 : num_qubits * 3]
+    weights_kp = x[:, 3*num_qubits:]
 
-        for i, wire in enumerate(wires):
-            qml.RZ(input_scaling[layer, i] * weights_kp[:, i], wires=[wire])
+    for layer in range(num_layers):
+        for block, features in enumerate([annotations, values_kp, weights_kp]):
+            for i in range(num_qubits):
+                qml.RX(input_scaling[layer, block, i] * features[:, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RX(annotations[:, i], wires=[wire])
+            for i in range(num_qubits):
+                qml.RY(weights[layer, block, i], wires=[i])
 
-        for i, wire in enumerate(wires):
-            qml.RZ(weights[layer, i], wires=[wire])
+            for i in range(num_qubits):
+                qml.RZ(weights[layer, block, i+num_qubits], wires=[i])
+        
+            if num_qubits == 2:
+                qml.CZ(wires=[0, 1])
+            else:
+                for i in range(num_qubits):
+                    qml.CZ(wires=[i, (i + 1) % num_qubits])
 
-        if len(wires) == 2:
-            qml.CZ(wires=wires)
-        else:
-            for i in range(len(wires)):
-                qml.CZ(wires=[wires[i], wires[(i + 1) % len(wires)]])
-
-    if agent_type == "actor":
-        return [qml.expval(qml.PauliZ(wires=wire)) for wire in wires[:num_actions]]
-    elif agent_type == "critic":
-        return [qml.expval(qml.PauliX(0))]
+    return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
 class ReinforceAgentQuantum(nn.Module):
@@ -74,31 +69,28 @@ class ReinforceAgentQuantum(nn.Module):
         self.observation_size = np.array(envs.single_observation_space.shape).prod()
         self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
+        self.num_layers = config["num_layers"]
+        self.block_size = 3  # number of subblocks depends on environment
 
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
 
-        self.num_layers = config["num_layers"]
-        self.wires = range(self.num_qubits)
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
-            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
+            torch.ones(self.num_layers, self.block_size, self.num_qubits), requires_grad=True
         )
         self.output_scaling = nn.Parameter(
             torch.ones(self.num_actions), requires_grad=True
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.rand(self.num_layers, self.block_size, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
 
-        device = qml.device(config["device"], wires=self.wires)
+        device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
             parametrized_quantum_circuit,
             device,
@@ -111,7 +103,7 @@ class ReinforceAgentQuantum(nn.Module):
             x,
             self.input_scaling,
             self.weights,
-            self.wires,
+            self.num_qubits,
             self.num_layers,
             self.num_actions,
         )
@@ -239,9 +231,9 @@ def reinforce_quantum_jumanji(config):
 
         # Normalize rewards
         discounted_rewards = torch.tensor(np.array(discounted_rewards)).to(device)
-        discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (
-            discounted_rewards.std() + 1e-9
-        )
+        # discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (
+        #     discounted_rewards.std() + 1e-9
+        # )
 
         # Calculate policy gradient loss
         loss = torch.cat(
@@ -302,8 +294,9 @@ if __name__ == "__main__":
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "TSP-v1"  # Environment ID
-        num_cities: int = 4
+        env_id: str = "Knapsack-v1"  # Environment ID
+        num_items: int = 4
+        total_budget: float = 2
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
@@ -314,10 +307,10 @@ if __name__ == "__main__":
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
-        num_qubits: int = 6  # Number of qubits
-        num_layers: int = 4  # Number of layers in the quantum circuit
+        num_qubits: int = 4  # Number of qubits
+        num_layers: int = 2  # Number of layers in the quantum circuit
         device: str = "lightning.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
 
     config = vars(Config())
