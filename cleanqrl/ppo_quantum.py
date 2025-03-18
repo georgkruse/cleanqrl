@@ -94,7 +94,9 @@ class PPOAgentQuantum(nn.Module):
         self.output_scaling_critic = nn.Parameter(torch.tensor(1.0), requires_grad=True)
         # trainable weights are initialized randomly between -pi and pi
         self.weights_critic = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.FloatTensor(self.num_layers, self.num_qubits * 2).uniform_(
+                -np.pi, np.pi
+            ),
             requires_grad=True,
         )
 

@@ -81,7 +81,9 @@ class ReinforceAgentQuantumContinuous(nn.Module):
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.FloatTensor(self.num_layers, self.num_qubits * 2).uniform_(
+                -np.pi, np.pi
+            ),
             requires_grad=True,
         )
         # additional trainable parameters for the variance of the continuous actions
