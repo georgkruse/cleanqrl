@@ -38,7 +38,9 @@ def make_env(env_id, config):
 
 
 # QUANTUM CIRCUIT: define your ansatz here:
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+def parameterized_quantum_circuit(
+    x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
@@ -97,7 +99,7 @@ class ReinforceAgentQuantum(nn.Module):
             self.num_qubits,
             self.num_layers,
             self.num_actions,
-            self.observation_size
+            self.observation_size,
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
@@ -178,7 +180,7 @@ def reinforce_quantum(config):
 
     observation_size = np.array(envs.single_observation_space.shape).prod()
     num_actions = envs.single_action_space.n
-    
+
     assert (
         num_qubits >= observation_size
     ), "Number of qubits must be greater than or equal to the observation size"

@@ -8,9 +8,9 @@ from pennylane import I, X, Z
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
-qubits = [2,4,6,8,10]
+qubits = [2, 4, 6, 8, 10]
 
-for n in qubits: 
+for n in qubits:
     # n = 10  # number of qubits.
     # generators = [Z(i) @ Z(i + 1) for i in range(n - 1)]
     # generators = [sum(Z(i) @ Z(i + 1) for i in range(n - 1))]
@@ -20,7 +20,7 @@ for n in qubits:
     sum_Z = []
     for i in range(n):
         for j in range(i + 1, n):
-            sum_Z.append(Z(i)@Z(j))
+            sum_Z.append(Z(i) @ Z(j))
     generators.append(sum(sum_Z))
     # generators += [X(i) for i in range(n)]
     generators += [sum(X(i) for i in range(n))]

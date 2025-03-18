@@ -8,10 +8,10 @@ from pennylane import I, X, Z
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
 
-qubits = [2] #,6,8,10]
+qubits = [2]  # ,6,8,10]
 
-# for n in qubits: 
-n = 2 # number of qubits.
+# for n in qubits:
+n = 2  # number of qubits.
 generators = [Z(i) @ Z(i + 1) for i in range(n - 1)]
 # generators = [sum(Z(i) @ Z(i + 1) for i in range(n - 1))]
 # generators = [Z(0)@Z(1)+Z(1)@Z(2)+Z(2)@Z(3)]
@@ -57,7 +57,7 @@ e_in = jnp.array(e_in)
 adjoint_repr = qml.structure_constants(dla, pauli=True, is_orthogonal=False)
 
 depth = 2
-gate_choice = [0,1] #np.random.choice(dim_g, size=depth)
+gate_choice = [0, 1]  # np.random.choice(dim_g, size=depth)
 gates = adjoint_repr[gate_choice]
 
 
@@ -80,10 +80,11 @@ gsim_forward, gsim_backward = forward(theta), jax.grad(forward)(theta)
 
 H = 0.5 * qml.sum(*[op.operation() for op in generators])
 
-print('H',H)
-print('dla', dla)
+print("H", H)
+print("dla", dla)
 for d in dla:
-    print('d', d)
+    print("d", d)
+
 
 @qml.qnode(qml.device("default.qubit", wires=n), interface="jax")
 def qnode(theta):
@@ -91,11 +92,12 @@ def qnode(theta):
         qml.exp(-1j * theta[i] * dla[mu].operation())
     return qml.expval(H)
 
+
 @qml.qnode(qml.device("default.qubit", wires=n), interface="jax")
 def qnode_(theta):
     # for i, mu in enumerate(gate_choice):
-    qml.exp(-1j * theta[0] * qml.PauliZ(0)@qml.PauliZ(1))
-    qml.exp(-1j * theta[1] * (qml.PauliX(0)+qml.PauliX(1)))
+    qml.exp(-1j * theta[0] * qml.PauliZ(0) @ qml.PauliZ(1))
+    qml.exp(-1j * theta[1] * (qml.PauliX(0) + qml.PauliX(1)))
     return qml.expval(H)
 
 
@@ -121,4 +123,4 @@ print(
     qml.math.allclose(statevec_forward, gsim_forward),
     qml.math.allclose(statevec_backward, gsim_backward),
 )
-print('Done')
+print("Done")

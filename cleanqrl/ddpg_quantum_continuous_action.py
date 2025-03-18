@@ -7,9 +7,10 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
 import gymnasium as gym
-import pennylane as qml
 import numpy as np
+import pennylane as qml
 import ray
 import torch
 import torch.nn as nn
@@ -24,8 +25,8 @@ from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
-    
-    
+
+
 # ENV LOGIC: create you env (with config) here:
 def make_env(env_id, config):
     def thunk():
@@ -39,7 +40,16 @@ def make_env(env_id, config):
 
 
 # QUANTUM CIRCUIT: define your ansatz here:
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size, agent_type):
+def parameterized_quantum_circuit(
+    x,
+    input_scaling,
+    weights,
+    num_qubits,
+    num_layers,
+    num_actions,
+    observation_size,
+    agent_type,
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RY(input_scaling[layer, i] * x[i], wires=[i])
@@ -61,14 +71,16 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
         return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
     elif agent_type == "critic":
         return [qml.expval(qml.PauliX(0))]
-    
+
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod() + np.prod(envs.single_action_space.shape)
+        self.observation_size = np.array(
+            envs.single_observation_space.shape
+        ).prod() + np.prod(envs.single_action_space.shape)
         self.num_actions = np.prod(envs.single_action_space.shape)
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
@@ -111,7 +123,7 @@ class QNetwork(nn.Module):
             self.num_layers,
             self.num_actions,
             self.observation_size,
-            "critic"
+            "critic",
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
@@ -122,7 +134,9 @@ class Actor(nn.Module):
     def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod() + np.prod(envs.single_action_space.shape)
+        self.observation_size = np.array(
+            envs.single_observation_space.shape
+        ).prod() + np.prod(envs.single_action_space.shape)
         self.num_actions = np.prod(envs.single_action_space.shape)
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
@@ -133,7 +147,6 @@ class Actor(nn.Module):
         assert (
             self.num_qubits >= self.num_actions
         ), "Number of qubits must be greater than or equal to the number of actions"
-
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -176,7 +189,7 @@ class Actor(nn.Module):
             self.num_layers,
             self.num_actions,
             self.observation_size,
-            "actor"
+            "actor",
         )
         logits = torch.stack(logits, dim=1)
         return logits * self.action_scale + self.action_bias

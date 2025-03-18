@@ -46,9 +46,7 @@ class ReinforceAgentClassical(nn.Module):
             nn.ReLU(),
             nn.Linear(64, num_actions),
         )
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, num_actions)
-        )
+        self.actor_logstd = nn.Parameter(torch.zeros(1, num_actions))
 
     def get_action_and_logprob(self, x):
         action_mean = self.actor_mean(x)
@@ -131,7 +129,7 @@ def reinforce_classical_continuous_action(config):
 
     observation_size = np.array(envs.single_observation_space.shape).prod()
     num_actions = np.prod(envs.single_action_space.shape)
-    
+
     # Here, the classical agent is initialized with a Neural Network
     agent = ReinforceAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=lr)

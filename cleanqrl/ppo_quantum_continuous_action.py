@@ -20,9 +20,11 @@ import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.normal import Normal
 
+
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
+
 
 # ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
@@ -46,11 +48,20 @@ def make_env(env_id, config):
 
 
 # QUANTUM CIRCUIT: define your ansatz here:
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size, agent_type):
+def parameterized_quantum_circuit(
+    x,
+    input_scaling,
+    weights,
+    num_qubits,
+    num_layers,
+    num_actions,
+    observation_size,
+    agent_type,
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RY(input_scaling[layer, i] * x[:, i], wires=[i])
-            qml.RZ(input_scaling[layer, i + observation_size] * x[:,i], wires=[i])
+            qml.RZ(input_scaling[layer, i + observation_size] * x[:, i], wires=[i])
 
         for i in range(num_qubits):
             qml.RZ(weights[layer, i], wires=[i])
@@ -104,9 +115,7 @@ class PPOAgentQuantumContinuous(nn.Module):
         )
 
         # additional trainable parameters for the variance of the continuous actions
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, num_actions)
-        )
+        self.actor_logstd = nn.Parameter(torch.zeros(1, num_actions))
 
         device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(

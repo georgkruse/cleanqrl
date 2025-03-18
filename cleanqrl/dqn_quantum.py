@@ -20,13 +20,13 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from replay_buffer import ReplayBuffer
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
 class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
+
 
 # ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
@@ -43,7 +43,9 @@ def make_env(env_id, config):
 
 
 # QUANTUM CIRCUIT: define your ansatz here:
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+def parameterized_quantum_circuit(
+    x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
@@ -100,7 +102,7 @@ class DQNAgentQuantum(nn.Module):
             self.num_qubits,
             self.num_layers,
             self.num_actions,
-            self.observation_size
+            self.observation_size,
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
@@ -143,7 +145,7 @@ def dqn_quantum(config: dict):
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
     num_qubits = config["num_qubits"]
-    
+
     if config["seed"] == "None":
         config["seed"] = None
 
@@ -190,7 +192,7 @@ def dqn_quantum(config: dict):
 
     observation_size = np.array(envs.single_observation_space.shape).prod()
     num_actions = envs.single_action_space.n
-    
+
     assert (
         num_qubits >= observation_size
     ), "Number of qubits must be greater than or equal to the observation size"

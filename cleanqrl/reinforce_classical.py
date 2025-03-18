@@ -24,7 +24,7 @@ def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        
+
         return env
 
     return thunk

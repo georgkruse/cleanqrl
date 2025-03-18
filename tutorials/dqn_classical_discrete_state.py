@@ -20,10 +20,11 @@ import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
+
 # ENV LOGIC: create you env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=config['is_slippery'])
+        env = gym.make(env_id, is_slippery=config["is_slippery"])
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
 

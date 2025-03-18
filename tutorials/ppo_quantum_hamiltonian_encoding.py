@@ -11,46 +11,52 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import pennylane as qml
-import sympy as sp
 import ray
+import sympy as sp
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
 import yaml
-from  jumanji import wrappers
+from jumanji import wrappers
+from jumanji.environments import Knapsack
+from jumanji.environments.packing.knapsack.generator import RandomGenerator
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
-from jumanji.environments import Knapsack
-from jumanji.environments.packing.knapsack.generator import RandomGenerator 
 
 
-# We need to create a new wrapper for the TSP environment that retu 
-# the observation into a cost hamiltonian of the problem. 
+# We need to create a new wrapper for the TSP environment that retu
+# the observation into a cost hamiltonian of the problem.
 class JumanjiWrapperKnapsack(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
         # For the knapsack problem we use the so called unbalanced penalization method
         # This means that we will have sum(range(num_items)) quadratic terms + num_items linear terms
-        # This is constant throughout 
+        # This is constant throughout
         self.num_items = self.env.unwrapped.num_items
         self.total_budget = self.env.unwrapped.total_budget
-        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(sum(range(self.num_items)) + self.num_items,))
-        
+        self.observation_space = gym.spaces.Box(
+            -np.inf, np.inf, shape=(sum(range(self.num_items)) + self.num_items,)
+        )
+
     def reset(self, **kwargs):
         state, info = self.env.reset()
         # convert the state to cost hamiltonian
-        offset, QUBO = self.formulate_knapsack_qubo_unbalanced(state['weights'], state['values'], self.total_budget)
+        offset, QUBO = self.formulate_knapsack_qubo_unbalanced(
+            state["weights"], state["values"], self.total_budget
+        )
         offset, h, J = self.convert_QUBO_to_ising(offset, QUBO)
         state = np.hstack([h, J])
         return state, info
-    
+
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
         if truncate:
-            values = self.previous_state['values']
-            weights = self.previous_state['weights']
-            optimal_value = self.knapsack_optimal_value(weights, values, self.total_budget)
+            values = self.previous_state["values"]
+            weights = self.previous_state["weights"]
+            optimal_value = self.knapsack_optimal_value(
+                weights, values, self.total_budget
+            )
             info["optimal_value"] = optimal_value
             info["approximation_ratio"] = info["episode"]["r"] / optimal_value
             # if info['approximation_ratio'] > 0.9:
@@ -60,7 +66,9 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
         self.previous_state = state
 
         # convert the state to cost hamiltonian
-        offset, QUBO = self.formulate_knapsack_qubo_unbalanced(state['weights'], state['values'], self.total_budget)
+        offset, QUBO = self.formulate_knapsack_qubo_unbalanced(
+            state["weights"], state["values"], self.total_budget
+        )
         offset, h, J = self.convert_QUBO_to_ising(offset, QUBO)
         state = np.hstack([h, J])
 
@@ -111,8 +119,9 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
 
         return float(dp[scaled_capacity])
 
-
-    def formulate_knapsack_qubo_unbalanced(self, weights, values, total_budget, lambdas=None):
+    def formulate_knapsack_qubo_unbalanced(
+        self, weights, values, total_budget, lambdas=None
+    ):
         """
         Formulates the QUBO with the unbalanced penalization method.
         This means the QUBO does not use additional slack variables.
@@ -169,7 +178,6 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
                 QUBO[int(parts[1]), int(parts[0])] = value / 2
         return offset, QUBO
 
-
     def convert_QUBO_to_ising(self, offset, Q):
         """Convert the matrix Q of Eq.3 into Eq.13 elements J and h"""
         n_qubits = len(Q)  # Get the number of qubits (variables) in the QUBO matrix
@@ -199,7 +207,7 @@ class JumanjiWrapperKnapsack(gym.Wrapper):
 
 def make_env(env_id, config):
     def thunk():
-        if env_id == 'Knapsack-v1':
+        if env_id == "Knapsack-v1":
             num_items = config.get("num_items", 5)
             total_budget = config.get("total_budget", 2)
             generator_knapsack = RandomGenerator(
@@ -224,8 +232,8 @@ def cost_hamiltonian_ansatz(
     #     np.max(np.abs(list(h.values()))), np.max(np.abs(list(h.values())))
     # )  # Normalizing the Hamiltonian is a good idea
     # Apply the initial layer of Hadamard gates to all qubits
-    h = x[:,:num_actions]
-    J = x[:,num_actions:]
+    h = x[:, :num_actions]
+    J = x[:, num_actions:]
 
     for i in wires:
         qml.Hadamard(wires=i)
@@ -234,7 +242,7 @@ def cost_hamiltonian_ansatz(
         # ---------- COST HAMILTONIAN ----------
         for idx_h in wires:  # single-qubit terms
             qml.RZ(input_scaling[layer] * h[:, idx_h], wires=idx_h)
-        
+
         idx_j = 0
         for i in wires:
             for j in range(i + 1, num_actions):

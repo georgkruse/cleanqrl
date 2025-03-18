@@ -24,7 +24,7 @@ from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 # ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=config['is_slippery'])
+        env = gym.make(env_id, is_slippery=config["is_slippery"])
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
 
@@ -140,7 +140,7 @@ def dqn_classical_discrete_state(config: dict):
     assert isinstance(
         envs.single_observation_space, gym.spaces.Discrete
     ), "only discrete state space is supported"
-    
+
     # This is for binary state encoding (see tutorials for one hot encoding)
     observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
     num_actions = envs.single_action_space.n
@@ -268,7 +268,7 @@ if __name__ == "__main__":
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
-        is_slippery: bool = True 
+        is_slippery: bool = True
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments

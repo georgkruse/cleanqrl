@@ -14,6 +14,7 @@ import ray
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 # import wandb
 import yaml
 from ray.train._internal.session import get_session
@@ -29,8 +30,10 @@ def make_env(env_id, config):
     return thunk
 
 
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
-    
+def parameterized_quantum_circuit(
+    x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size
+):
+
     for i in range(num_qubits):
         qml.Hadamard(wires=i)
 
@@ -105,7 +108,7 @@ class ReinforceAgentQuantum(nn.Module):
             self.num_qubits,
             self.num_layers,
             self.num_actions,
-            self.observation_size
+            self.observation_size,
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
@@ -257,7 +260,7 @@ def reinforce_quantum_discrete_state(config):
         #     discounted_rewards.std() + 1e-9
         # )
         print(discounted_rewards)
-        
+
         # Calculate policy gradient loss
         loss = torch.cat(
             [-log_prob * Gt for log_prob, Gt in zip(log_probs, discounted_rewards)]
@@ -313,7 +316,7 @@ if __name__ == "__main__":
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
-        is_slippery: bool = False 
+        is_slippery: bool = False
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments

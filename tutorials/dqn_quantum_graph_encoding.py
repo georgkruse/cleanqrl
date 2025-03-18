@@ -1,10 +1,10 @@
 # This file is an adaptation from https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
 import datetime
+import itertools
 import json
 import os
 import random
 import time
-import itertools
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,47 +12,49 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
-import sympy as sp
 import pennylane as qml
 import ray
+import sympy as sp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from jumanji import wrappers
 import wandb
 import yaml
-from ray.train._internal.session import get_session
-from replay_buffer import ReplayBuffer, ReplayBufferWrapper
+from jumanji import wrappers
 from jumanji.environments import TSP
 from jumanji.environments.routing.tsp.generator import UniformGenerator
+from ray.train._internal.session import get_session
+from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
-# We need to create a new wrapper for the Knapsack environment that converts 
-# the observation into a cost hamiltonian of the problem. 
+# We need to create a new wrapper for the Knapsack environment that converts
+# the observation into a cost hamiltonian of the problem.
 class JumanjiWrapperTSP(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
         # For the knapsack problem we use the so called unbalanced penalization method
         # This means that we will have sum(range(num_items)) quadratic terms + num_items linear terms
-        # This is constant throughout 
+        # This is constant throughout
         self.num_cities = self.env.unwrapped.num_cities
-        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(sum(range(self.num_cities)) + self.num_cities,))
+        self.observation_space = gym.spaces.Box(
+            -np.inf, np.inf, shape=(sum(range(self.num_cities)) + self.num_cities,)
+        )
         self.episodes = 0
 
     def reset(self, **kwargs):
         state, info = self.env.reset()
         # convert the state to cost hamiltonian
-        pairwise_distances = self.calculate_city_distances(state['coordinates'])
-        annotations = state['trajectory']
+        pairwise_distances = self.calculate_city_distances(state["coordinates"])
+        annotations = state["trajectory"]
         state = np.hstack([pairwise_distances, annotations])
         return state, info
-    
+
     def step(self, action):
         state, reward, terminate, truncate, info = self.env.step(action)
         if truncate:
             if self.episodes % 100 == 0:
-                nodes = state['coordinates']
+                nodes = state["coordinates"]
                 optimal_tour_length = self.tsp_compute_optimal_tour(nodes)
                 info["optimal_tour_length"] = optimal_tour_length
                 info["approximation_ratio"] = info["episode"]["r"] / optimal_tour_length
@@ -61,10 +63,10 @@ class JumanjiWrapperTSP(gym.Wrapper):
         else:
             info = dict()
         self.previous_state = state
-        
+
         # convert the state to cost hamiltonian
-        pairwise_distances = self.calculate_city_distances(state['coordinates'])
-        annotations = state['trajectory']
+        pairwise_distances = self.calculate_city_distances(state["coordinates"])
+        annotations = state["trajectory"]
         state = np.hstack([pairwise_distances, annotations])
 
         return state, reward, False, truncate, info
@@ -73,13 +75,13 @@ class JumanjiWrapperTSP(gym.Wrapper):
         pairwise_distances = np.zeros(sum(range(self.num_cities)))
         idx = 0
         for i in range(self.num_cities):
-            for j in range(i+1, self.num_cities):  # Only calculate upper triangle
+            for j in range(i + 1, self.num_cities):  # Only calculate upper triangle
                 distance = np.linalg.norm(
                     np.asarray(city_coordinates[i]) - np.asarray(city_coordinates[j])
                 )
                 # Set distance for both directions
                 pairwise_distances[idx] = distance
-                idx +=1
+                idx += 1
         return pairwise_distances
 
     def tsp_compute_optimal_tour(self, nodes):
@@ -113,9 +115,10 @@ class JumanjiWrapperTSP(gym.Wrapper):
 
         return tour_length
 
+
 def make_env(env_id, config):
     def thunk():
-        if env_id == 'TSP-v1':
+        if env_id == "TSP-v1":
             num_cities = config.get("num_cities", 5)
             generator_tsp = UniformGenerator(num_cities=num_cities)
             env = TSP(generator_tsp)
@@ -131,25 +134,23 @@ def make_env(env_id, config):
     return thunk
 
 
-def graph_encoding_ansatz(
-    x, input_scaling, weights, wires, layers, num_actions
-):
+def graph_encoding_ansatz(x, input_scaling, weights, wires, layers, num_actions):
     # wmax = max(
     #     np.max(np.abs(list(h.values()))), np.max(np.abs(list(h.values())))
     # )  # Normalizing the Hamiltonian is a good idea
     # Apply the initial layer of Hadamard gates to all qubits
-    distances = x[:,:sum(range(num_actions))]
-    annotations = x[:,sum(range(num_actions)):]
+    distances = x[:, : sum(range(num_actions))]
+    annotations = x[:, sum(range(num_actions)) :]
     annotations_converted = np.zeros_like(annotations, dtype=float)
     # Set values to 0 if negative, π if positive
-    annotations_converted[annotations > 0] = np.pi    
-    
+    annotations_converted[annotations > 0] = np.pi
+
     for i in wires:
         qml.Hadamard(wires=i)
     # repeat p layers the circuit shown in Fig. 1
     for layer in range(layers):
-        
-        idx= 0
+
+        idx = 0
         for i in wires:
             for j in range(i + 1, num_actions):
                 qml.CNOT(wires=[i, j])
@@ -271,7 +272,7 @@ def dqn_quantum_jumanji(config: dict):
             save_code=True,
             dir=report_path,
         )
-        
+
     # TRY NOT TO MODIFY: seeding
     if config["seed"] is None:
         seed = np.random.randint(0, 1e9)
@@ -344,7 +345,9 @@ def dqn_quantum_jumanji(config: dict):
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
                     if "approximation_ratio" in infos.keys():
-                        metrics["approximation_ratio"] = infos["approximation_ratio"][idx]
+                        metrics["approximation_ratio"] = infos["approximation_ratio"][
+                            idx
+                        ]
                         episode_approximation_ratio.append(
                             metrics["approximation_ratio"]
                         )
@@ -355,7 +358,6 @@ def dqn_quantum_jumanji(config: dict):
                 if len(episode_approximation_ratio) > 0:
                     logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
                 print(logging_info)
-
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()

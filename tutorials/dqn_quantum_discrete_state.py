@@ -25,7 +25,9 @@ from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=config['is_slippery'], map_name=config['map_name'])
+        env = gym.make(
+            env_id, is_slippery=config["is_slippery"], map_name=config["map_name"]
+        )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
 
@@ -34,7 +36,9 @@ def make_env(env_id, config):
     return thunk
 
 
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+def parameterized_quantum_circuit(
+    x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
@@ -106,7 +110,7 @@ class DQNAgentQuantum(nn.Module):
             self.num_qubits,
             self.num_layers,
             self.num_actions,
-            self.observation_size
+            self.observation_size,
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
@@ -333,7 +337,7 @@ if __name__ == "__main__":
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
-        is_slippery: bool = False 
+        is_slippery: bool = False
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
@@ -342,7 +346,9 @@ if __name__ == "__main__":
         total_timesteps: int = 30000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration
         end_e: float = 0.01  # Ending value of epsilon for exploration
-        exploration_fraction: float = 0.35  # Fraction of total timesteps for exploration
+        exploration_fraction: float = (
+            0.35  # Fraction of total timesteps for exploration
+        )
         learning_starts: int = 100  # Timesteps before learning starts
         train_frequency: int = 10  # Frequency of training
         batch_size: int = 32  # Batch size for training

@@ -198,7 +198,7 @@ def create_jumanji_env(env_id, config):
             raise KeyError(f"Jumanji does not have the env '{env_id}'.")
         print(
             f"WARNING: A custom wrapper for '{env_id}' is not implemented.",
-            "This might lead to unexepected behaviour. See the tutorials for examples."
+            "This might lead to unexepected behaviour. See the tutorials for examples.",
         )
 
     env = jumanji.wrappers.JumanjiToGymWrapper(env)

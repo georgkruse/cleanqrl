@@ -24,7 +24,7 @@ from torch.distributions.categorical import Categorical
 # ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=config['is_slippery'])
+        env = gym.make(env_id, is_slippery=config["is_slippery"])
         env = gym.wrappers.RecordEpisodeStatistics(env)
 
         return env
@@ -32,7 +32,16 @@ def make_env(env_id, config):
     return thunk
 
 
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size, agent_type):
+def parameterized_quantum_circuit(
+    x,
+    input_scaling,
+    weights,
+    num_qubits,
+    num_layers,
+    num_actions,
+    observation_size,
+    agent_type,
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
@@ -53,6 +62,7 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
         return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
     elif agent_type == "critic":
         return [qml.expval(qml.PauliX(0))]
+
 
 # ALGO LOGIC: initialize your agent here:
 class PPOAgentQuantum(nn.Module):
@@ -457,7 +467,7 @@ if __name__ == "__main__":
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
-        is_slippery: bool = False 
+        is_slippery: bool = False
 
         # Algorithm parameters
         total_timesteps: int = 1000000  # Total timesteps for the experiment

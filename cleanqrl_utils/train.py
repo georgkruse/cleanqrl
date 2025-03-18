@@ -6,6 +6,9 @@ repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(repo_path)
 sys.path.append(os.path.join(repo_path, "cleanqrl"))
 
+from cleanqrl.ddpg_classical_continuous_action import ddpg_classical_continuous_action
+from cleanqrl.ddpg_quantum_continuous_action import ddpg_quantum_continuous_action
+
 # DQN classical
 from cleanqrl.dqn_classical import dqn_classical
 from cleanqrl.dqn_classical_discrete_state import dqn_classical_discrete_state
@@ -45,9 +48,6 @@ from cleanqrl.reinforce_quantum_continuous_action import (
 )
 from cleanqrl.reinforce_quantum_discrete_state import reinforce_quantum_discrete_state
 from cleanqrl.reinforce_quantum_jumanji import reinforce_quantum_jumanji
-from cleanqrl.ddpg_classical_continuous_action import ddpg_classical_continuous_action
-from cleanqrl.ddpg_quantum_continuous_action import ddpg_quantum_continuous_action
-
 
 agent_switch = {
     "ppo_classical": ppo_classical,

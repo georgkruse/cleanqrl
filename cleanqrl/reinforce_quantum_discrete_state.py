@@ -23,16 +23,18 @@ from torch.distributions.categorical import Categorical
 # ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=config['is_slippery'])
+        env = gym.make(env_id, is_slippery=config["is_slippery"])
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        
+
         return env
 
     return thunk
 
 
 # QUANTUM CIRCUIT: define your ansatz here:
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+def parameterized_quantum_circuit(
+    x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
@@ -83,7 +85,6 @@ class ReinforceAgentQuantum(nn.Module):
             interface="torch",
         )
 
-
     def forward(self, x):
         x = self.encode_input(x)
         logits = self.quantum_circuit(
@@ -93,7 +94,7 @@ class ReinforceAgentQuantum(nn.Module):
             self.num_qubits,
             self.num_layers,
             self.num_actions,
-            self.observation_size
+            self.observation_size,
         )
         logits = torch.stack(logits, dim=1)
         probs = logits * self.output_scaling
@@ -102,13 +103,12 @@ class ReinforceAgentQuantum(nn.Module):
         action = m.sample()
         return action, m.log_prob(action)
 
-
     def encode_input(self, x):
         x_binary = torch.zeros((x.shape[0], self.observation_size))
         for i, val in enumerate(x):
             binary = bin(int(val.item()))[2:]
             padded = binary.zfill(self.observation_size)
-            x_binary[i] = torch.tensor([int(bit)*np.pi for bit in padded])
+            x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
         return x_binary
 
 
@@ -223,13 +223,15 @@ def reinforce_quantum_discrete_state(config):
 
         # Episode loop
         while not done:
-            obs = torch.Tensor(obs).to(device)            
+            obs = torch.Tensor(obs).to(device)
             action, log_prob = agent.forward(obs)
-            obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            obs, reward, terminations, truncations, infos = envs.step(
+                action.cpu().numpy()
+            )
             rewards.append(reward)
             log_probs.append(log_prob)
             done = np.any(terminations) or np.any(truncations)
-        
+
         global_step += len(rewards) * num_envs
 
         # Compute the discounted rewards
@@ -238,7 +240,9 @@ def reinforce_quantum_discrete_state(config):
         for reward in reversed(rewards):
             cumulative_reward = reward + gamma * cumulative_reward
             discounted_rewards.insert(0, cumulative_reward)
-        discounted_rewards = [torch.tensor(Gt, dtype=torch.float32) for Gt in discounted_rewards]
+        discounted_rewards = [
+            torch.tensor(Gt, dtype=torch.float32) for Gt in discounted_rewards
+        ]
 
         # Compute the policy loss
         loss = torch.cat(
@@ -294,7 +298,7 @@ if __name__ == "__main__":
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
-        is_slippery: bool = False # Whether the environment is slippery
+        is_slippery: bool = False  # Whether the environment is slippery
 
         # Algorithm parameters
         num_envs: int = 2  # Number of environments

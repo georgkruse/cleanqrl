@@ -14,20 +14,21 @@ import ray
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 # import wandb
 import yaml
+from maze_game import MazeGame
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
-from maze_game import MazeGame
 
 def make_env(env_id, config):
     def thunk():
-        config['game_mode'] = 'frozen_lake'
-        config['state_encoding'] = 'binary'
-        config['legal_actions_type'] = 'restricted'
-        config['map_name'] = '4x4'
-        config['is_slippery'] = False
+        config["game_mode"] = "frozen_lake"
+        config["state_encoding"] = "binary"
+        config["legal_actions_type"] = "restricted"
+        config["map_name"] = "4x4"
+        config["is_slippery"] = False
         env = MazeGame(config)
         # env = gym.make(env_id, is_slippery=False)
         # env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -36,8 +37,10 @@ def make_env(env_id, config):
     return thunk
 
 
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
-    
+def parameterized_quantum_circuit(
+    x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size
+):
+
     for i in range(num_qubits):
         qml.Hadamard(wires=i)
 
@@ -47,8 +50,8 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
         z = 0
         for i in range(num_qubits):
             qml.RZ(weights[layer, z], wires=[i])
-            qml.RY(weights[layer, z+1], wires=[i])
-            z+=2
+            qml.RY(weights[layer, z + 1], wires=[i])
+            z += 2
 
         if num_qubits == 2:
             qml.CZ(wires=[0, 1])
@@ -89,7 +92,8 @@ class ReinforceAgentQuantum(nn.Module):
             torch.ones(self.num_actions), requires_grad=True
         )
         # trainable weights are initialized randomly between -pi and pi
-        self.weights = nn.Parameter(torch.FloatTensor(self.num_layers, self.num_qubits * 2).uniform_(0, 0.1),
+        self.weights = nn.Parameter(
+            torch.FloatTensor(self.num_layers, self.num_qubits * 2).uniform_(0, 0.1),
             requires_grad=True,
         )
 
@@ -102,7 +106,7 @@ class ReinforceAgentQuantum(nn.Module):
         )
 
     def forward(self, state):
-    
+
         # state = state.unsqueeze(0)
         # state = torch.from_numpy(state).float().unsqueeze(0)
 
@@ -113,7 +117,7 @@ class ReinforceAgentQuantum(nn.Module):
             self.num_qubits,
             self.num_layers,
             self.num_actions,
-            self.observation_size
+            self.observation_size,
         )
         logits = torch.stack(logits, dim=1)
         probs = logits * self.output_scaling
@@ -122,7 +126,7 @@ class ReinforceAgentQuantum(nn.Module):
         m = Categorical(probs)
         action = m.sample()
         return action.item(), m.log_prob(action)
-    
+
     # def forward(self, x):
     #     # x_encoded = self.encode_input(x)
     #     logits = self.quantum_circuit(
@@ -174,6 +178,7 @@ def normalize_rewards(rewards):
     rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-9)
     return rewards
 
+
 def discounted_rewards(rewards):
     discounted_rewards = []
     R = 0
@@ -182,9 +187,6 @@ def discounted_rewards(rewards):
         R = r + gamma * R
         discounted_rewards.insert(0, R)
     return torch.tensor(discounted_rewards, dtype=torch.float32)
-        
-
-
 
 
 def reinforce_quantum_discrete_state(config):
@@ -235,11 +237,11 @@ def reinforce_quantum_discrete_state(config):
     assert (
         env_id in gym.envs.registry.keys()
     ), f"{env_id} is not a valid gymnasium environment"
-    config['game_mode'] = 'frozen_lake'
-    config['state_encoding'] = 'binary'
-    config['legal_actions_type'] = 'restricted'
-    config['map_name'] = '4x4'
-    config['is_slippery'] = False
+    config["game_mode"] = "frozen_lake"
+    config["state_encoding"] = "binary"
+    config["legal_actions_type"] = "restricted"
+    config["map_name"] = "4x4"
+    config["is_slippery"] = False
     # envs = MazeGame(config)
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, config) for _ in range(num_envs)],
@@ -260,8 +262,8 @@ def reinforce_quantum_discrete_state(config):
             {"params": agent.output_scaling, "lr": lr_output_scaling},
             {"params": agent.weights, "lr": lr_weights},
         ],
-         amsgrad=True,
-         weight_decay=0
+        amsgrad=True,
+        weight_decay=0,
     )
 
     # global parameters to log
@@ -277,16 +279,17 @@ def reinforce_quantum_discrete_state(config):
 
     x = 0
     from copy import deepcopy
+
     while global_step < total_timesteps:
 
         done = True
-        
+
         steps_trained_epoch = 0
         episodes_trained_epoch = 0
         rewards_epoch = []
         policy_loss_epoch = []
         env_steps_per_epoch = []
-        
+
         rewards_epoch_train = []
         log_probs_epoch_train = []
         steps_per_episode = 0
@@ -298,7 +301,7 @@ def reinforce_quantum_discrete_state(config):
         for _ in range(200):
             log_probs = []
             rewards = []
-            
+
             done = False
             # Episode loop
             while not done:
@@ -311,19 +314,21 @@ def reinforce_quantum_discrete_state(config):
                 log_probs_episode.append(log_prob)
                 obs = torch.tensor(deepcopy(next_obs), dtype=torch.float32)
                 done = np.any(terminations) or np.any(truncations)
-                step +=1
-                x +=1
+                step += 1
+                x += 1
 
-            if done or (step == steps_per_epoch-1):
-                if done or len(rewards_epoch) == 0:        
+            if done or (step == steps_per_epoch - 1):
+                if done or len(rewards_epoch) == 0:
                     rewards_epoch.append(np.sum(rewards_episode))
                 env_steps_per_epoch.append(steps_per_episode)
-                if step == steps_per_epoch-1:
-                    rewards_epoch_train.append(torch.tensor(rewards_episode, dtype=torch.float32))
+                if step == steps_per_epoch - 1:
+                    rewards_epoch_train.append(
+                        torch.tensor(rewards_episode, dtype=torch.float32)
+                    )
                 else:
                     rewards_epoch_train.append(discounted_rewards(rewards_episode))
                 log_probs_epoch_train.append(torch.cat(log_probs_episode))
-                # episodes_trained_total += 1            
+                # episodes_trained_total += 1
                 # episodes_trained_epoch += 1
                 steps_per_episode = 0
                 rewards_episode = []
@@ -338,7 +343,7 @@ def reinforce_quantum_discrete_state(config):
         #     x += 1
         #     action, log_prob = agent.forward(state)
         #     # action, log_prob = select_action(state)
-        #     next_state, reward, terminations, truncations, _ = env.step(action)            
+        #     next_state, reward, terminations, truncations, _ = env.step(action)
         #     state = next_state
         #     done = np.any(terminations) or np.any(truncations)
 
@@ -350,7 +355,7 @@ def reinforce_quantum_discrete_state(config):
         #     # steps_trained_total += 1
 
         #     if done or (step == steps_per_epoch-1):
-        #         if done or len(rewards_epoch) == 0:        
+        #         if done or len(rewards_epoch) == 0:
         #             rewards_epoch.append(np.sum(rewards_episode))
         #         env_steps_per_epoch.append(steps_per_episode)
         #         if step == steps_per_epoch-1:
@@ -358,7 +363,7 @@ def reinforce_quantum_discrete_state(config):
         #         else:
         #             rewards_epoch_train.append(discounted_rewards(rewards_episode))
         #         log_probs_epoch_train.append(torch.cat(log_probs_episode))
-        #         # episodes_trained_total += 1            
+        #         # episodes_trained_total += 1
         #         # episodes_trained_epoch += 1
         #         steps_per_episode = 0
         #         rewards_episode = []
@@ -400,7 +405,7 @@ if __name__ == "__main__":
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
-        is_slippery: bool = False 
+        is_slippery: bool = False
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments

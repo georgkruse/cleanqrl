@@ -32,14 +32,16 @@ def make_env(env_id, config):
         env = gym.wrappers.RecordEpisodeStatistics(env)
         # The observation wrapper has a big impact on quantum agent performance. May need to be adjusted.
         env = ArctanNormalizationWrapper(env)
-        
+
         return env
 
     return thunk
 
 
 # QUANTUM CIRCUIT: define your ansatz here:
-def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
+def parameterized_quantum_circuit(
+    x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size
+):
     for layer in range(num_layers):
         for i in range(observation_size):
             qml.RY(input_scaling[layer, i] * x[:, i], wires=[i])
@@ -83,9 +85,7 @@ class ReinforceAgentQuantumContinuous(nn.Module):
             requires_grad=True,
         )
         # additional trainable parameters for the variance of the continuous actions
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, num_actions)
-        )
+        self.actor_logstd = nn.Parameter(torch.zeros(1, num_actions))
 
         device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
@@ -103,7 +103,7 @@ class ReinforceAgentQuantumContinuous(nn.Module):
             self.num_qubits,
             self.num_layers,
             self.num_actions,
-            self.observation_size
+            self.observation_size,
         )
         action_mean = torch.stack(action_mean, dim=1)
         action_mean = action_mean * self.output_scaling
@@ -186,7 +186,7 @@ def reinforce_quantum_continuous_action(config):
 
     observation_size = np.array(envs.single_observation_space.shape).prod()
     num_actions = np.prod(envs.single_action_space.shape)
-    
+
     assert (
         num_qubits >= observation_size
     ), "Number of qubits must be greater than or equal to the observation size"
@@ -195,7 +195,9 @@ def reinforce_quantum_continuous_action(config):
     ), "Number of qubits must be greater than or equal to the number of actions"
 
     # Here, the quantum agent is initialized with a parameterized quantum circuit
-    agent = ReinforceAgentQuantumContinuous(observation_size, num_actions, config).to(device)
+    agent = ReinforceAgentQuantumContinuous(observation_size, num_actions, config).to(
+        device
+    )
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling, "lr": lr_input_scaling},

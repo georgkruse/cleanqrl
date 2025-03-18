@@ -129,7 +129,7 @@ def dqn_classical(config: dict):
 
     observation_size = np.prod(envs.single_observation_space.shape)
     num_actions = envs.single_action_space.n
-    
+
     # Here, the classical agent is initialized with a Neural Network
     q_network = DQNAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=lr)

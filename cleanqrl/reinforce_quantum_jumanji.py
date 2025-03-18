@@ -42,7 +42,7 @@ def parametrized_quantum_circuit(
 
     annotations = x[:, num_qubits : num_qubits * 2]
     values_kp = x[:, num_qubits * 2 : num_qubits * 3]
-    weights_kp = x[:, 3*num_qubits:]
+    weights_kp = x[:, 3 * num_qubits :]
 
     for layer in range(num_layers):
         for block, features in enumerate([annotations, values_kp, weights_kp]):
@@ -53,8 +53,8 @@ def parametrized_quantum_circuit(
                 qml.RY(weights[layer, block, i], wires=[i])
 
             for i in range(num_qubits):
-                qml.RZ(weights[layer, block, i+num_qubits], wires=[i])
-        
+                qml.RZ(weights[layer, block, i + num_qubits], wires=[i])
+
             if num_qubits == 2:
                 qml.CZ(wires=[0, 1])
             else:
@@ -76,14 +76,18 @@ class ReinforceAgentQuantum(nn.Module):
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
-            torch.ones(self.num_layers, self.block_size, self.num_qubits), requires_grad=True
+            torch.ones(self.num_layers, self.block_size, self.num_qubits),
+            requires_grad=True,
         )
         self.output_scaling = nn.Parameter(
             torch.ones(self.num_actions), requires_grad=True
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.block_size, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.rand(self.num_layers, self.block_size, self.num_qubits * 2)
+            * 2
+            * torch.pi
+            - torch.pi,
             requires_grad=True,
         )
 
@@ -179,7 +183,7 @@ def reinforce_quantum_jumanji(config):
     ), "only discrete action space is supported"
 
     num_actions = envs.single_action_space.n
-    
+
     assert (
         num_qubits >= num_actions
     ), "Number of qubits must be greater than or equal to the number of actions"

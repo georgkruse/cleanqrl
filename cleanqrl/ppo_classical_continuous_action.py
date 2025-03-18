@@ -38,6 +38,7 @@ def make_env(env_id, config):
 
     return thunk
 
+
 # ALGO LOGIC: initialize your agent here:
 class PPOAgentClassicalContinuous(nn.Module):
     def __init__(self, observation_size, num_actions):
@@ -56,9 +57,7 @@ class PPOAgentClassicalContinuous(nn.Module):
             nn.ReLU(),
             nn.Linear(64, num_actions),
         )
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, num_actions)
-        )
+        self.actor_logstd = nn.Parameter(torch.zeros(1, num_actions))
 
     def get_value(self, x):
         return self.critic(x)
