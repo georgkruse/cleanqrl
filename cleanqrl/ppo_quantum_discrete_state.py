@@ -61,7 +61,7 @@ def parameterized_quantum_circuit(
     if agent_type == "actor":
         return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
     elif agent_type == "critic":
-        return [qml.expval(qml.PauliX(0))]
+        return [qml.expval(qml.PauliZ(0))]
 
 
 # ALGO LOGIC: initialize your agent here:
@@ -95,7 +95,10 @@ class PPOAgentQuantum(nn.Module):
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights_actor = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.FloatTensor(
+                self.num_layers, self.block_size, self.num_qubits * 2).uniform_(
+                    -np.pi, np.pi
+                    ),
             requires_grad=True,
         )
 
