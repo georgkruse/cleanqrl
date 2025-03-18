@@ -26,9 +26,9 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
         return np.arctan(obs)
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-
         env = gym.make(env_id)
         env = gym.wrappers.FlattenObservation(
             env
@@ -44,10 +44,11 @@ def make_env(env_id, config):
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size, agent_type):
     for layer in range(num_layers):
         for i in range(observation_size):
-            qml.RX(input_scaling[layer, i] * x[i], wires=[i])
+            qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
 
         for i in range(num_qubits):
             qml.RY(weights[layer, i], wires=[i])
@@ -67,21 +68,15 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
         return [qml.expval(qml.PauliX(0))]
 
 
+# ALGO LOGIC: initialize your agent here:
 class PPOAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, observation_size, num_actions, config):
         super().__init__()
         self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.observation_size = observation_size
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
 
         # input and output scaling are always initialized as ones
         self.input_scaling_critic = nn.Parameter(
@@ -160,6 +155,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ppo_quantum(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
@@ -182,6 +178,7 @@ def ppo_quantum(config):
     target_kl = config["target_kl"]
     max_grad_norm = config["max_grad_norm"]
     cuda = config["cuda"]
+    num_qubits = config["num_qubits"]
 
     if target_kl == "None":
         target_kl = None
@@ -236,9 +233,18 @@ def ppo_quantum(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantum(envs, config).to(
-        device
-    )  # This is what I need to change to fit quantum into the picture
+    observation_size = np.array(envs.single_observation_space.shape).prod()
+    num_actions = envs.single_action_space.n
+    
+    assert (
+        num_qubits >= observation_size
+    ), "Number of qubits must be greater than or equal to the observation size"
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    agent = PPOAgentQuantum(observation_size, num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
@@ -264,7 +270,7 @@ def ppo_quantum(config):
     # global parameters to log
     global_step = 0
     global_episodes = 0
-    print_interval = 50
+    print_interval = 10
     episode_returns = deque(maxlen=print_interval)
 
     # TRY NOT TO MODIFY: start the game
@@ -450,7 +456,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ppo_quantum"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
@@ -479,8 +485,8 @@ if __name__ == "__main__":
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 4  # Number of qubits
         num_layers: int = 2  # Number of layers in the quantum circuit
-        device: str = "default.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
+        device: str = "lightning.qubit"  # Quantum device
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
 
     config = vars(Config())

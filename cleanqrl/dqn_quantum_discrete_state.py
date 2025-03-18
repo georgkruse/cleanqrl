@@ -23,9 +23,10 @@ from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=config['is_slippery'], map_name=config['map_name'])
+        env = gym.make(env_id, is_slippery=config['is_slippery'])
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
 
@@ -34,6 +35,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
     for layer in range(num_layers):
         for i in range(observation_size):
@@ -54,27 +56,15 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
     return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
+# ALGO LOGIC: initialize your agent here:
 class DQNAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, observation_size: int, num_actions: int, config: dict):
         super().__init__()
         self.config = config
-        self.state_encoding = config["state_encoding"]
-
-        if self.state_encoding == "onehot":
-            self.observation_size = envs.single_observation_space.n
-        elif self.state_encoding == "binary":
-            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
-
-        self.num_actions = envs.single_action_space.n
+        self.observation_size = observation_size
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -113,18 +103,12 @@ class DQNAgentQuantum(nn.Module):
         return logits
 
     def encode_input(self, x):
-        if self.state_encoding == "onehot":
-            x_onehot = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                x_onehot[i, int(val.item())] = np.pi
-            return x_onehot
-        elif self.state_encoding == "binary":
-            x_binary = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                binary = bin(int(val.item()))[2:]
-                padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
-            return x_binary
+        x_binary = torch.zeros((x.shape[0], self.observation_size))
+        for i, val in enumerate(x):
+            binary = bin(int(val.item()))[2:]
+            padded = binary.zfill(self.observation_size)
+            x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
+        return x_binary
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -143,6 +127,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def dqn_quantum_discrete_state(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
@@ -161,6 +146,7 @@ def dqn_quantum_discrete_state(config: dict):
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
+    num_qubits = config["num_qubits"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -205,7 +191,19 @@ def dqn_quantum_discrete_state(config: dict):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    q_network = DQNAgentQuantum(envs, config).to(device)
+    # This is for binary state encoding (see tutorials for one hot encoding)
+    observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+    num_actions = envs.single_action_space.n
+
+    assert (
+        num_qubits >= observation_size
+    ), "Number of qubits must be greater than or equal to the observation size"
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    q_network = DQNAgentQuantum(observation_size, num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": q_network.input_scaling, "lr": lr_input_scaling},
@@ -213,7 +211,7 @@ def dqn_quantum_discrete_state(config: dict):
             {"params": q_network.weights, "lr": lr_weights},
         ]
     )
-    target_network = DQNAgentQuantum(envs, config).to(device)
+    target_network = DQNAgentQuantum(observation_size, num_actions, config).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -358,9 +356,6 @@ if __name__ == "__main__":
         device: str = "lightning.qubit"  # Quantum device
         diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
-        state_encoding: str = (
-            "binary"  # Type of state encoding, either "binary" or "onehot"
-        )
 
     config = vars(Config())
 

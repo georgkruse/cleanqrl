@@ -20,7 +20,7 @@ import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
-
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
@@ -31,7 +31,7 @@ def make_env(env_id, config):
     return thunk
 
 
-# ALGO LOGIC: initialize agent here:
+# ALGO LOGIC: initialize your agent here:
 class QNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
@@ -91,6 +91,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ddpg_classical_continuous_action(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
@@ -147,6 +148,7 @@ def ddpg_classical_continuous_action(config: dict):
         envs.single_action_space, gym.spaces.Box
     ), "only continuous action space is supported"
 
+    # Here, the classical agent is initialized with a Neural Network
     actor = Actor(envs).to(device)
     qf1 = QNetwork(envs).to(device)
     qf1_target = QNetwork(envs).to(device)

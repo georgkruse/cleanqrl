@@ -19,10 +19,11 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
-from cleanqrl.wrapper_jumanji import create_jumanji_env
+from wrapper_jumanji import create_jumanji_env
 
 
-def make_env(env_id, config):
+# ENV LOGIC: create your env (with config) here:
+def make_env(env_id: str, config: dict):
     def thunk():
         env = create_jumanji_env(env_id, config)
         env = ReplayBufferWrapper(env)
@@ -31,16 +32,16 @@ def make_env(env_id, config):
     return thunk
 
 
-# ALGO LOGIC: initialize agent here:
+# ALGO LOGIC: initialize your agent here:
 class DQNAgentClassical(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, observation_size: int, num_actions: int):
         super().__init__()
         self.network = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, num_actions),
         )
 
     def forward(self, x):
@@ -63,6 +64,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def dqn_classical_jumanji(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
@@ -121,9 +123,13 @@ def dqn_classical_jumanji(config: dict):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    q_network = DQNAgentClassical(envs).to(device)
+    observation_size = np.array(envs.single_observation_space.shape).prod()
+    num_actions = envs.single_action_space.n
+
+    # Here, the classical agent is initialized with a Neural Network
+    q_network = DQNAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=lr)
-    target_network = DQNAgentClassical(envs).to(device)
+    target_network = DQNAgentClassical(observation_size, num_actions).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -250,7 +256,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "dqn_classical_jumanji"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

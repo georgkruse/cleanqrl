@@ -18,9 +18,9 @@ import yaml
 from ray.train._internal.session import get_session
 
 
-def make_env(env_id, config=None):
+# ENV LOGIC: create your env (with config) here:
+def make_env(env_id, config):
     def thunk():
-
         env = gym.make(env_id)
         env = gym.wrappers.FlattenObservation(
             env
@@ -35,18 +35,19 @@ def make_env(env_id, config=None):
     return thunk
 
 
+# ALGO LOGIC: initialize your agent here:
 class ReinforceAgentClassical(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, observation_size, num_actions):
         super().__init__()
         self.actor_mean = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, np.prod(envs.single_action_space.shape)),
+            nn.Linear(64, num_actions),
         )
         self.actor_logstd = nn.Parameter(
-            torch.zeros(1, np.prod(envs.single_action_space.shape))
+            torch.zeros(1, num_actions)
         )
 
     def get_action_and_logprob(self, x):
@@ -69,6 +70,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def reinforce_classical_continuous_action(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
@@ -127,8 +129,11 @@ def reinforce_classical_continuous_action(config):
         envs.single_observation_space, gym.spaces.Box
     ), "only continuous observation space is supported"
 
+    observation_size = np.array(envs.single_observation_space.shape).prod()
+    num_actions = np.prod(envs.single_action_space.shape)
+    
     # Here, the classical agent is initialized with a Neural Network
-    agent = ReinforceAgentClassical(envs).to(device)
+    agent = ReinforceAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=lr)
 
     # global parameters to log
@@ -227,7 +232,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "reinforce_classical_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

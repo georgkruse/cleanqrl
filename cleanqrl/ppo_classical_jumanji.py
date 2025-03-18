@@ -21,6 +21,7 @@ from torch.distributions.categorical import Categorical
 from wrapper_jumanji import create_jumanji_env
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = create_jumanji_env(env_id, config)
@@ -30,6 +31,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# ALGO LOGIC: initialize your agent here:
 class PPOAgentClassicalJumanji(nn.Module):
     def __init__(self, envs):
         super().__init__()
@@ -70,6 +72,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ppo_classical_jumanji(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
@@ -141,6 +144,7 @@ def ppo_classical_jumanji(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
+    # Here, the classical agent is initialized with a Neural Network
     agent = PPOAgentClassicalJumanji(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
 

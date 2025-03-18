@@ -25,6 +25,7 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
         return np.arctan(obs)
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
@@ -36,6 +37,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
     for layer in range(num_layers):
         for i in range(observation_size):
@@ -56,21 +58,15 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
     return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
+# ALGO LOGIC: initialize your agent here:
 class ReinforceAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, observation_size, num_actions, config):
         super().__init__()
         self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.observation_size = observation_size
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -121,6 +117,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def reinforce_quantum(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
@@ -129,6 +126,7 @@ def reinforce_quantum(config):
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
+    num_qubits = config["num_qubits"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -178,8 +176,18 @@ def reinforce_quantum(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    # Here, the classical agent is initialized with a Neural Network
-    agent = ReinforceAgentQuantum(envs, config).to(device)
+    observation_size = np.array(envs.single_observation_space.shape).prod()
+    num_actions = envs.single_action_space.n
+    
+    assert (
+        num_qubits >= observation_size
+    ), "Number of qubits must be greater than or equal to the observation size"
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    agent = ReinforceAgentQuantum(observation_size, num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling, "lr": lr_input_scaling},
@@ -301,7 +309,7 @@ if __name__ == "__main__":
         num_qubits: int = 6  # Number of qubits
         num_layers: int = 4  # Number of layers in the quantum circuit
         device: str = "lightning.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
 
     config = vars(Config())

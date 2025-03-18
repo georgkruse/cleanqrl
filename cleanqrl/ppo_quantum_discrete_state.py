@@ -21,6 +21,7 @@ from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id, is_slippery=config['is_slippery'])
@@ -53,28 +54,15 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
     elif agent_type == "critic":
         return [qml.expval(qml.PauliX(0))]
 
-
+# ALGO LOGIC: initialize your agent here:
 class PPOAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, observation_size, num_actions, config):
         super().__init__()
         self.config = config
-        self.state_encoding = config["state_encoding"]
-
-        if self.state_encoding == "onehot":
-            self.observation_size = envs.single_observation_space.n
-        elif self.state_encoding == "binary":
-            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
-
-        self.num_actions = envs.single_action_space.n
+        self.observation_size = observation_size
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
 
         # input and output scaling are always initialized as ones
         self.input_scaling_critic = nn.Parameter(
@@ -111,7 +99,7 @@ class PPOAgentQuantum(nn.Module):
         x_encoded = self.encode_input(x)
         value = self.quantum_circuit(
             x_encoded,
-            self.output_scaling_critic,
+            self.input_scaling_critic,
             self.weights_critic,
             self.num_qubits,
             self.num_layers,
@@ -143,18 +131,12 @@ class PPOAgentQuantum(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.get_value(x)
 
     def encode_input(self, x):
-        if self.state_encoding == "onehot":
-            x_onehot = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                x_onehot[i, int(val.item())] = np.pi
-            return x_onehot
-        elif self.state_encoding == "binary":
-            x_binary = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                binary = bin(int(val.item()))[2:]
-                padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
-            return x_binary
+        x_binary = torch.zeros((x.shape[0], self.observation_size))
+        for i, val in enumerate(x):
+            binary = bin(int(val.item()))[2:]
+            padded = binary.zfill(self.observation_size)
+            x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
+        return x_binary
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -168,6 +150,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ppo_quantum_discrete_state(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
@@ -190,6 +173,7 @@ def ppo_quantum_discrete_state(config):
     target_kl = config["target_kl"]
     max_grad_norm = config["max_grad_norm"]
     cuda = config["cuda"]
+    num_qubits = config["num_qubits"]
 
     if target_kl == "None":
         target_kl = None
@@ -244,9 +228,19 @@ def ppo_quantum_discrete_state(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantum(envs, config).to(
-        device
-    )  # This is what I need to change to fit quantum into the picture
+    # This is for binary state encoding (see tutorials for one hot encoding)
+    observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+    num_actions = envs.single_action_space.n
+
+    assert (
+        num_qubits >= observation_size
+    ), "Number of qubits must be greater than or equal to the observation size"
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    agent = PPOAgentQuantum(observation_size, num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
@@ -272,7 +266,7 @@ def ppo_quantum_discrete_state(config):
     # global parameters to log
     global_step = 0
     global_episodes = 0
-    print_interval = 50
+    print_interval = 10
     episode_returns = deque(maxlen=print_interval)
 
     # TRY NOT TO MODIFY: start the game
@@ -458,11 +452,12 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ppo_quantum_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
+        is_slippery: bool = False 
 
         # Algorithm parameters
         total_timesteps: int = 1000000  # Total timesteps for the experiment
@@ -487,12 +482,9 @@ if __name__ == "__main__":
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 16  # Number of qubits
         num_layers: int = 2  # Number of layers in the quantum circuit
-        device: str = "default.qubit"  # Quantum device
-        diff_method: str = "backprop"  # Differentiation method
+        device: str = "lightning.qubit"  # Quantum device
+        diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
-        state_encoding: str = (
-            "binary"  # Type of state encoding, either "binary" or "onehot"
-        )
 
     config = vars(Config())
 

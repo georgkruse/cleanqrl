@@ -28,7 +28,7 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
 
-
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
@@ -42,6 +42,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
     for layer in range(num_layers):
         for i in range(observation_size):
@@ -62,22 +63,15 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
     return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
+# ALGO LOGIC: initialize your agent here:
 class DQNAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, observation_size, num_actions, config):
         super().__init__()
         self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.observation_size = observation_size
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
-
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
             torch.ones(self.num_layers, self.num_qubits), requires_grad=True
@@ -90,7 +84,6 @@ class DQNAgentQuantum(nn.Module):
             torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
-
         device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
             parameterized_quantum_circuit,
@@ -130,6 +123,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def dqn_quantum(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
@@ -148,7 +142,8 @@ def dqn_quantum(config: dict):
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
-
+    num_qubits = config["num_qubits"]
+    
     if config["seed"] == "None":
         config["seed"] = None
 
@@ -193,7 +188,18 @@ def dqn_quantum(config: dict):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    q_network = DQNAgentQuantum(envs, config).to(device)
+    observation_size = np.array(envs.single_observation_space.shape).prod()
+    num_actions = envs.single_action_space.n
+    
+    assert (
+        num_qubits >= observation_size
+    ), "Number of qubits must be greater than or equal to the observation size"
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    q_network = DQNAgentQuantum(observation_size, num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": q_network.input_scaling, "lr": lr_input_scaling},
@@ -201,7 +207,7 @@ def dqn_quantum(config: dict):
             {"params": q_network.weights, "lr": lr_weights},
         ]
     )
-    target_network = DQNAgentQuantum(envs, config).to(device)
+    target_network = DQNAgentQuantum(observation_size, num_actions, config).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -316,7 +322,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "dqn_quantum"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

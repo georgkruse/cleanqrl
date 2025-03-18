@@ -20,6 +20,7 @@ from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
 
@@ -38,6 +39,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# ALGO LOGIC: initialize your agent here:
 class PPOAgentClassical(nn.Module):
     def __init__(self, envs):
         super().__init__()
@@ -78,6 +80,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ppo_classical(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
@@ -152,9 +155,8 @@ def ppo_classical(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = PPOAgentClassical(envs).to(
-        device
-    )  # This is what I need to change to fit quantum into the picture
+    # Here, the classical agent is initialized with a Neural Network
+    agent = PPOAgentClassical(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
 
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(
@@ -353,7 +355,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ppo_classical"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

@@ -21,6 +21,7 @@ from torch.distributions.categorical import Categorical
 from wrapper_jumanji import create_jumanji_env
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = create_jumanji_env(env_id, config)
@@ -30,6 +31,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parametrized_quantum_circuit(
     x, input_scaling, weights, num_qubits, num_layers, num_actions
 ):
@@ -62,20 +64,15 @@ def parametrized_quantum_circuit(
     return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
+# ALGO LOGIC: initialize your agent here:
 class ReinforceAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, num_actions, config):
         super().__init__()
         self.config = config
-        self.observation_size = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.block_size = 3  # number of subblocks depends on environment
-
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
-
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -125,6 +122,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def reinforce_quantum_jumanji(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
@@ -133,6 +131,7 @@ def reinforce_quantum_jumanji(config):
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
+    num_qubits = config["num_qubits"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -179,8 +178,14 @@ def reinforce_quantum_jumanji(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    # Here, the classical agent is initialized with a Neural Network
-    agent = ReinforceAgentQuantum(envs, config).to(device)
+    num_actions = envs.single_action_space.n
+    
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    agent = ReinforceAgentQuantum(num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling, "lr": lr_input_scaling},
@@ -290,7 +295,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "reinforce_quantum_jumanji"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

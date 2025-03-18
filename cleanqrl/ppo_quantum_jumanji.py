@@ -22,6 +22,7 @@ from torch.distributions.categorical import Categorical
 from wrapper_jumanji import create_jumanji_env
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = create_jumanji_env(env_id, config)
@@ -30,6 +31,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parametrized_quantum_circuit(
     x, input_scaling, weights, num_qubits, num_layers, num_actions, agent_type
 ):
@@ -65,22 +67,16 @@ def parametrized_quantum_circuit(
         return [qml.expval(qml.PauliZ(0))]
     
 
-
+# ALGO LOGIC: initialize your agent here:
 class PPOAgentQuantumJumanji(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, num_actions, config):
         super().__init__()
         self.config = config
-        self.envs = envs
-        self.observation_size = np.array(envs.single_observation_space.shape).prod()
-        self.num_actions = envs.single_action_space.n
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
         self.block_size = 3  # number of subblocks depends on environment
         
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
-
         # input and output scaling are always initialized as ones
         self.input_scaling_critic = nn.Parameter(
             torch.ones(self.num_layers, self.block_size, self.num_qubits), requires_grad=True
@@ -156,6 +152,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ppo_quantum_jumanji(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
@@ -178,6 +175,7 @@ def ppo_quantum_jumanji(config):
     target_kl = config["target_kl"]
     max_grad_norm = config["max_grad_norm"]
     cuda = config["cuda"]
+    num_qubits = config["num_qubits"]
 
     if target_kl == "None":
         target_kl = None
@@ -229,7 +227,14 @@ def ppo_quantum_jumanji(config):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = PPOAgentQuantumJumanji(envs, config).to(device)
+    num_actions = envs.single_action_space.n
+    
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    agent = PPOAgentQuantumJumanji(num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling_actor, "lr": lr_input_scaling},
@@ -255,7 +260,7 @@ def ppo_quantum_jumanji(config):
     # global parameters to log
     global_step = 0
     global_episodes = 0
-    print_interval = 50
+    print_interval = 10
     episode_returns = deque(maxlen=print_interval)
     episode_approximation_ratio = deque(maxlen=print_interval)
 
@@ -446,7 +451,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ppo_quantum_jumanji"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

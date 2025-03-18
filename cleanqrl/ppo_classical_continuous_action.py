@@ -20,6 +20,7 @@ from ray.train._internal.session import get_session
 from torch.distributions.normal import Normal
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
 
@@ -37,40 +38,35 @@ def make_env(env_id, config):
 
     return thunk
 
-
+# ALGO LOGIC: initialize your agent here:
 class PPOAgentClassicalContinuous(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, observation_size, num_actions):
         super().__init__()
         self.critic = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
         )
         self.actor_mean = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, np.prod(envs.single_action_space.shape)),
+            nn.Linear(64, num_actions),
         )
-        # self.actor_mean = nn.Linear(64, np.prod(envs.single_action_space.shape))
         self.actor_logstd = nn.Parameter(
-            torch.zeros(1, np.prod(envs.single_action_space.shape))
+            torch.zeros(1, num_actions)
         )
-        # self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
 
     def get_value(self, x):
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None):
-        # features = self.actor_shared(x)
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
-        # action_logstd = self.actor_logstd(features)
-        # action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
@@ -93,6 +89,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ppo_classical_continuous_action(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
@@ -166,7 +163,11 @@ def ppo_classical_continuous_action(config):
         envs.single_action_space, gym.spaces.Box
     ), "only continuous action space is supported"
 
-    agent = PPOAgentClassicalContinuous(envs).to(device)
+    observation_size = np.array(envs.single_observation_space.shape).prod()
+    num_actions = np.prod(envs.single_action_space.shape)
+
+    # Here, the classical agent is initialized with a Neural Network
+    agent = PPOAgentClassicalContinuous(observation_size, num_actions).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -362,7 +363,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ppo_classical_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

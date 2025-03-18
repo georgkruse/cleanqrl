@@ -25,7 +25,8 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return np.arctan(obs)
     
-
+    
+# ENV LOGIC: create you env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
@@ -37,6 +38,7 @@ def make_env(env_id, config):
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size, agent_type):
     for layer in range(num_layers):
         for i in range(observation_size):
@@ -191,6 +193,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ddpg_quantum_continuous_action(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
@@ -249,6 +252,7 @@ def ddpg_quantum_continuous_action(config: dict):
         envs.single_action_space, gym.spaces.Box
     ), "only continuous action space is supported"
 
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
     actor = Actor(envs, config).to(device)
     qf1 = QNetwork(envs, config).to(device)
     qf1_target = QNetwork(envs, config).to(device)

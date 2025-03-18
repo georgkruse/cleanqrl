@@ -19,24 +19,27 @@ from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
 
-def make_env(env_id):
+# ENV LOGIC: create your env (with config) here:
+def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        
         return env
 
     return thunk
 
 
+# ALGO LOGIC: initialize your agent here:
 class ReinforceAgentClassical(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, observation_size, num_actions):
         super().__init__()
         self.network = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, num_actions),
         )
 
     def get_action_and_logprob(self, x):
@@ -57,6 +60,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def reinforce_classical(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
@@ -105,15 +109,18 @@ def reinforce_classical(config):
     ), f"{env_id} is not a valid gymnasium environment"
 
     envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id) for _ in range(num_envs)],
+        [make_env(env_id, config) for _ in range(num_envs)],
     )
 
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
+    observation_size = np.prod(envs.single_observation_space.shape)
+    num_actions = envs.single_action_space.n
+
     # Here, the classical agent is initialized with a Neural Network
-    agent = ReinforceAgentClassical(envs).to(device)
+    agent = ReinforceAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=lr)
 
     # global parameters to log
@@ -211,7 +218,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "reinforce_classical"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

@@ -14,21 +14,24 @@ import ray
 import torch
 import torch.nn as nn
 import torch.optim as optim
-# import wandb
+import wandb
 import yaml
 from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id, is_slippery=config['is_slippery'], map_name=config['map_name'])
+        env = gym.make(env_id, is_slippery=config['is_slippery'])
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        
         return env
 
     return thunk
 
 
+# QUANTUM CIRCUIT: define your ansatz here:
 def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
     for layer in range(num_layers):
         for i in range(observation_size):
@@ -49,29 +52,16 @@ def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_lay
     return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
+# ALGO LOGIC: initialize your agent here:
 class ReinforceAgentQuantum(nn.Module):
-    def __init__(self, envs, config):
+    def __init__(self, observation_size, num_actions, config):
         super().__init__()
         self.config = config
-        self.state_encoding = config["state_encoding"]
+        self.observation_size = observation_size
+        self.num_actions = num_actions
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-        self.num_actions = envs.single_action_space.n
         self.softmax = nn.Softmax(dim=-1)
-
-        if self.state_encoding == "onehot":
-            self.observation_size = envs.single_observation_space.n
-        elif self.state_encoding == "binary":
-            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
-
-
-
-        assert (
-            self.num_qubits >= self.observation_size
-        ), "Number of qubits must be greater than or equal to the observation size"
-        assert (
-            self.num_qubits >= self.num_actions
-        ), "Number of qubits must be greater than or equal to the number of actions"
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
@@ -85,7 +75,6 @@ class ReinforceAgentQuantum(nn.Module):
             torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
-
         device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
             parameterized_quantum_circuit,
@@ -115,18 +104,12 @@ class ReinforceAgentQuantum(nn.Module):
 
 
     def encode_input(self, x):
-        if self.state_encoding == "onehot":
-            x_onehot = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                x_onehot[i, int(val.item())] = np.pi
-            return x_onehot
-        elif self.state_encoding == "binary":
-            x_binary = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                binary = bin(int(val.item()))[2:]
-                padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit)*np.pi for bit in padded])
-            return x_binary
+        x_binary = torch.zeros((x.shape[0], self.observation_size))
+        for i, val in enumerate(x):
+            binary = bin(int(val.item()))[2:]
+            padded = binary.zfill(self.observation_size)
+            x_binary[i] = torch.tensor([int(bit)*np.pi for bit in padded])
+        return x_binary
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -140,6 +123,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def reinforce_quantum_discrete_state(config):
     num_envs = config["num_envs"]
     total_timesteps = config["total_timesteps"]
@@ -148,6 +132,7 @@ def reinforce_quantum_discrete_state(config):
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
+    num_qubits = config["num_qubits"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -200,8 +185,19 @@ def reinforce_quantum_discrete_state(config):
         envs.single_observation_space, gym.spaces.Discrete
     ), "only discrete state space is supported"
 
-    # Here, the classical agent is initialized with a Neural Network
-    agent = ReinforceAgentQuantum(envs, config).to(device)
+    # This is for binary state encoding (see tutorials for one hot encoding)
+    observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+    num_actions = envs.single_action_space.n
+
+    assert (
+        num_qubits >= observation_size
+    ), "Number of qubits must be greater than or equal to the observation size"
+    assert (
+        num_qubits >= num_actions
+    ), "Number of qubits must be greater than or equal to the number of actions"
+
+    # Here, the quantum agent is initialized with a parameterized quantum circuit
+    agent = ReinforceAgentQuantum(observation_size, num_actions, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": agent.input_scaling, "lr": lr_input_scaling},
@@ -299,7 +295,6 @@ if __name__ == "__main__":
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
         is_slippery: bool = False # Whether the environment is slippery
-        map_name: str = "4x4"  # Map name for FrozenLake 
 
         # Algorithm parameters
         num_envs: int = 2  # Number of environments
@@ -315,9 +310,6 @@ if __name__ == "__main__":
         device: str = "lightning.qubit"  # Quantum device
         diff_method: str = "adjoint"  # Differentiation method
         save_model: bool = True  # Save the model after the run
-        state_encoding: str = (
-            "binary"  # Type of state encoding, either "binary" or "onehot"
-        )
 
     config = vars(Config())
 

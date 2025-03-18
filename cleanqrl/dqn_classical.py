@@ -18,11 +18,11 @@ import torch.optim as optim
 import wandb
 import yaml
 from ray.train._internal.session import get_session
-from replay_buffer import ReplayBuffer
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
-def make_env(env_id):
+# ENV LOGIC: create your env (with config) here:
+def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -33,16 +33,16 @@ def make_env(env_id):
     return thunk
 
 
-# ALGO LOGIC: initialize agent here:
+# ALGO LOGIC: initialize your agent here:
 class DQNAgentClassical(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, observation_size, num_actions):
         super().__init__()
         self.network = nn.Sequential(
-            nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64),
+            nn.Linear(observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, num_actions),
         )
 
     def forward(self, x):
@@ -65,6 +65,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def dqn_classical(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
@@ -121,14 +122,18 @@ def dqn_classical(config: dict):
     ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    q_network = DQNAgentClassical(envs).to(device)
+    observation_size = np.prod(envs.single_observation_space.shape)
+    num_actions = envs.single_action_space.n
+    
+    # Here, the classical agent is initialized with a Neural Network
+    q_network = DQNAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=lr)
-    target_network = DQNAgentClassical(envs).to(device)
+    target_network = DQNAgentClassical(observation_size, num_actions).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -243,7 +248,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "dqn_classical"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters

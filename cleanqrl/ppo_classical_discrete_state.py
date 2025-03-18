@@ -20,6 +20,7 @@ from ray.train._internal.session import get_session
 from torch.distributions.categorical import Categorical
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
@@ -30,16 +31,11 @@ def make_env(env_id, config):
     return thunk
 
 
+# ALGO LOGIC: initialize your agent here:
 class PPOAgentClassical(nn.Module):
-    def __init__(self, envs, state_encoding):
+    def __init__(self, observation_size, num_actions):
         super().__init__()
-        self.state_encoding = state_encoding
-
-        if self.state_encoding == "onehot":
-            self.observation_size = envs.single_observation_space.n
-        elif self.state_encoding == "binary":
-            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
-
+        self.observation_size = observation_size
         self.critic = nn.Sequential(
             nn.Linear(self.observation_size, 64),
             nn.ReLU(),
@@ -52,7 +48,7 @@ class PPOAgentClassical(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, num_actions),
         )
 
     def get_value(self, x):
@@ -68,18 +64,12 @@ class PPOAgentClassical(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(x_encoded)
 
     def encode_input(self, x):
-        if self.state_encoding == "onehot":
-            x_onehot = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                x_onehot[i, int(val.item())] = 1
-            return x_onehot
-        elif self.state_encoding == "binary":
-            x_binary = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                binary = bin(int(val.item()))[2:]
-                padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit) for bit in padded])
-            return x_binary
+        x_binary = torch.zeros((x.shape[0], self.observation_size))
+        for i, val in enumerate(x):
+            binary = bin(int(val.item()))[2:]
+            padded = binary.zfill(self.observation_size)
+            x_binary[i] = torch.tensor([int(bit) for bit in padded])
+        return x_binary
 
 
 def log_metrics(config, metrics, report_path=None):
@@ -93,6 +83,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def ppo_classical_discrete_state(config):
     num_envs = config["num_envs"]
     num_steps = config["num_steps"]
@@ -113,12 +104,6 @@ def ppo_classical_discrete_state(config):
     target_kl = config["target_kl"]
     max_grad_norm = config["max_grad_norm"]
     cuda = config["cuda"]
-    state_encoding = config["state_encoding"]
-
-    assert state_encoding in [
-        "onehot",
-        "binary",
-    ], "state encoding needs to be binary or onehot"
 
     if target_kl == "None":
         target_kl = None
@@ -177,7 +162,12 @@ def ppo_classical_discrete_state(config):
         envs.single_observation_space, gym.spaces.Discrete
     ), "only discrete state space is supported"
 
-    agent = PPOAgentClassical(envs, state_encoding).to(device)
+    # This is for binary state encoding (see tutorials for one hot encoding)
+    observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+    num_actions = envs.single_action_space.n
+
+    # Here, the classical agent is initialized with a Neural Network
+    agent = PPOAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate)
 
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(
@@ -376,7 +366,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ppo_classical_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
@@ -402,9 +392,6 @@ if __name__ == "__main__":
         target_kl: float = None  # Target KL divergence threshold
         cuda: bool = False  # Whether to use CUDA
         save_model: bool = True  # Save the model after the run
-        state_encoding: str = (
-            "binary"  # Type of state encoding, either "binary" or "onehot"
-        )
 
     config = vars(Config())
 

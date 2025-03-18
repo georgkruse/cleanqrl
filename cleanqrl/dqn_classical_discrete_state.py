@@ -21,6 +21,7 @@ from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
 
 
+# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id, is_slippery=config['is_slippery'])
@@ -32,23 +33,17 @@ def make_env(env_id, config):
     return thunk
 
 
-# ALGO LOGIC: initialize agent here:
+# ALGO LOGIC: initialize your agent here:
 class DQNAgentClassical(nn.Module):
-    def __init__(self, envs, state_encoding):
+    def __init__(self, observation_size: int, num_actions: int):
         super().__init__()
-        self.state_encoding = state_encoding
-
-        if self.state_encoding == "onehot":
-            self.observation_size = envs.single_observation_space.n
-        elif self.state_encoding == "binary":
-            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
-
+        self.observation_size = observation_size
         self.network = nn.Sequential(
-            nn.Linear(self.observation_size, 64),
+            nn.Linear(observation_size, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, num_actions),
         )
 
     def forward(self, x):
@@ -56,18 +51,12 @@ class DQNAgentClassical(nn.Module):
         return self.network(x_encoded)
 
     def encode_state(self, x):
-        if self.state_encoding == "onehot":
-            x_onehot = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                x_onehot[i, int(val.item())] = 1
-            return x_onehot
-        elif self.state_encoding == "binary":
-            x_binary = torch.zeros((x.shape[0], self.observation_size))
-            for i, val in enumerate(x):
-                binary = bin(int(val.item()))[2:]
-                padded = binary.zfill(self.observation_size)
-                x_binary[i] = torch.tensor([int(bit) for bit in padded])
-            return x_binary
+        x_binary = torch.zeros((x.shape[0], self.observation_size))
+        for i, val in enumerate(x):
+            binary = bin(int(val.item()))[2:]
+            padded = binary.zfill(self.observation_size)
+            x_binary[i] = torch.tensor([int(bit) for bit in padded])
+        return x_binary
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -86,6 +75,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
+# MAIN TRAINING FUNCTION
 def dqn_classical_discrete_state(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
@@ -102,12 +92,6 @@ def dqn_classical_discrete_state(config: dict):
     target_network_frequency = config["target_network_frequency"]
     tau = config["tau"]
     lr = config["lr"]
-    state_encoding = config["state_encoding"]
-
-    assert state_encoding in [
-        "onehot",
-        "binary",
-    ], "state encoding needs to be binary or onehot"
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -148,7 +132,7 @@ def dqn_classical_discrete_state(config: dict):
     ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(env_id) for i in range(num_envs)])
+    envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
 
     assert isinstance(
         envs.single_action_space, gym.spaces.Discrete
@@ -156,10 +140,15 @@ def dqn_classical_discrete_state(config: dict):
     assert isinstance(
         envs.single_observation_space, gym.spaces.Discrete
     ), "only discrete state space is supported"
+    
+    # This is for binary state encoding (see tutorials for one hot encoding)
+    observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+    num_actions = envs.single_action_space.n
 
-    q_network = DQNAgentClassical(envs, state_encoding).to(device)
+    # Here, the classical agent is initialized with a Neural Network
+    q_network = DQNAgentClassical(observation_size, num_actions).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=lr)
-    target_network = DQNAgentClassical(envs, state_encoding).to(device)
+    target_network = DQNAgentClassical(observation_size, num_actions).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -274,11 +263,12 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "dqn_classical_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = True  # Use wandb to log experiment data
+        wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
         env_id: str = "FrozenLake-v1"  # Environment ID
+        is_slippery: bool = True 
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
@@ -297,9 +287,6 @@ if __name__ == "__main__":
         lr: float = 0.01  # Learning rate for network weights
         cuda: bool = False  # Whether to use CUDA
         save_model: bool = True  # Save the model after the run
-        state_encoding: str = (
-            "binary"  # Type of state encoding, either "binary" or "onehot"
-        )
 
     config = vars(Config())
 

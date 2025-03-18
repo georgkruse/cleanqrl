@@ -21,13 +21,12 @@ import wandb
 import yaml
 from ray.train._internal.session import get_session
 from replay_buffer import ReplayBuffer, ReplayBufferWrapper
-from wrapper_jumanji import create_jumanji_env
 
 
-# ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = create_jumanji_env(env_id, config)
+        env = gym.make(env_id, is_slippery=config['is_slippery'], map_name=config['map_name'])
+        env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ReplayBufferWrapper(env)
 
         return env
@@ -35,82 +34,97 @@ def make_env(env_id, config):
     return thunk
 
 
-# QUANTUM CIRCUIT: define your ansatz here:
-def parametrized_quantum_circuit(
-    x, input_scaling, weights, num_qubits, num_layers, num_actions
-):
-
-    # This block needs to be adapted depending on the environment.
-    # The input vector is of shape [4*num_actions] for the Knapsack:
-    # [action mask, selected items, values, weights]
-
-    annotations = x[:, num_qubits : num_qubits * 2]
-    values_kp = x[:, num_qubits * 2 : num_qubits * 3]
-    weights_kp = x[:, 3*num_qubits:]
-
+def parameterized_quantum_circuit(x, input_scaling, weights, num_qubits, num_layers, num_actions, observation_size):
     for layer in range(num_layers):
-        for block, features in enumerate([annotations, values_kp, weights_kp]):
-            for i in range(num_qubits):
-                qml.RX(input_scaling[layer, block, i] * features[:, i], wires=[i])
+        for i in range(observation_size):
+            qml.RX(input_scaling[layer, i] * x[:, i], wires=[i])
 
-            for i in range(num_qubits):
-                qml.RY(weights[layer, block, i], wires=[i])
+        for i in range(num_qubits):
+            qml.RY(weights[layer, i], wires=[i])
 
+        for i in range(num_qubits):
+            qml.RZ(weights[layer, i + num_qubits], wires=[i])
+
+        if num_qubits == 2:
+            qml.CZ(wires=[0, 1])
+        else:
             for i in range(num_qubits):
-                qml.RZ(weights[layer, block, i+num_qubits], wires=[i])
-        
-            if num_qubits == 2:
-                qml.CZ(wires=[0, 1])
-            else:
-                for i in range(num_qubits):
-                    qml.CZ(wires=[i, (i + 1) % num_qubits])
+                qml.CZ(wires=[i, (i + 1) % num_qubits])
 
     return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
 
 
-# ALGO LOGIC: initialize your agent here:
 class DQNAgentQuantum(nn.Module):
-    def __init__(self, num_actions, config):
+    def __init__(self, envs, config):
         super().__init__()
         self.config = config
-        self.num_actions = num_actions
+        self.state_encoding = config["state_encoding"]
+
+        if self.state_encoding == "onehot":
+            self.observation_size = envs.single_observation_space.n
+        elif self.state_encoding == "binary":
+            self.observation_size = len(bin(envs.single_observation_space.n - 1)[2:])
+
+        self.num_actions = envs.single_action_space.n
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
-        self.block_size = 3  # number of subblocks depends on environment
+
+        assert (
+            self.num_qubits >= self.observation_size
+        ), "Number of qubits must be greater than or equal to the observation size"
+        assert (
+            self.num_qubits >= self.num_actions
+        ), "Number of qubits must be greater than or equal to the number of actions"
 
         # input and output scaling are always initialized as ones
         self.input_scaling = nn.Parameter(
-            torch.ones(self.num_layers, self.block_size, self.num_qubits), requires_grad=True
+            torch.ones(self.num_layers, self.num_qubits), requires_grad=True
         )
         self.output_scaling = nn.Parameter(
             torch.ones(self.num_actions), requires_grad=True
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights = nn.Parameter(
-            torch.rand(self.num_layers, self.block_size, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
             requires_grad=True,
         )
 
         device = qml.device(config["device"], wires=range(self.num_qubits))
         self.quantum_circuit = qml.QNode(
-            parametrized_quantum_circuit,
+            parameterized_quantum_circuit,
             device,
             diff_method=config["diff_method"],
             interface="torch",
         )
 
     def forward(self, x):
+        x_encoded = self.encode_input(x)
         logits = self.quantum_circuit(
-            x,
+            x_encoded,
             self.input_scaling,
             self.weights,
             self.num_qubits,
             self.num_layers,
             self.num_actions,
+            self.observation_size
         )
         logits = torch.stack(logits, dim=1)
         logits = logits * self.output_scaling
         return logits
+
+    def encode_input(self, x):
+        if self.state_encoding == "onehot":
+            x_onehot = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                x_onehot[i, int(val.item())] = np.pi
+            return x_onehot
+        elif self.state_encoding == "binary":
+            x_binary = torch.zeros((x.shape[0], self.observation_size))
+            for i, val in enumerate(x):
+                binary = bin(int(val.item()))[2:]
+                padded = binary.zfill(self.observation_size)
+                x_binary[i] = torch.tensor([int(bit) * np.pi for bit in padded])
+            return x_binary
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -129,8 +143,7 @@ def log_metrics(config, metrics, report_path=None):
             f.write("\n")
 
 
-# MAIN TRAINING FUNCTION
-def dqn_quantum_jumanji(config: dict):
+def dqn_quantum_discrete_state(config: dict):
     cuda = config["cuda"]
     env_id = config["env_id"]
     num_envs = config["num_envs"]
@@ -148,7 +161,6 @@ def dqn_quantum_jumanji(config: dict):
     lr_input_scaling = config["lr_input_scaling"]
     lr_weights = config["lr_weights"]
     lr_output_scaling = config["lr_output_scaling"]
-    num_qubits = config["num_qubits"]
 
     if config["seed"] == "None":
         config["seed"] = None
@@ -173,7 +185,6 @@ def dqn_quantum_jumanji(config: dict):
             save_code=True,
             dir=report_path,
         )
-
     # TRY NOT TO MODIFY: seeding
     if config["seed"] is None:
         seed = np.random.randint(0, 1e9)
@@ -184,6 +195,9 @@ def dqn_quantum_jumanji(config: dict):
     np.random.seed(seed)
     torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    assert (
+        env_id in gym.envs.registry.keys()
+    ), f"{env_id} is not a valid gymnasium environment"
 
     # env setup
     envs = gym.vector.SyncVectorEnv([make_env(env_id, config) for i in range(num_envs)])
@@ -191,14 +205,7 @@ def dqn_quantum_jumanji(config: dict):
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    num_actions = envs.single_action_space.n
-
-    assert (
-        num_qubits >= num_actions
-    ), "Number of qubits must be greater than or equal to the number of actions"
-
-    # Here, the quantum agent is initialized with a parameterized quantum circuit
-    q_network = DQNAgentQuantum(num_actions, config).to(device)
+    q_network = DQNAgentQuantum(envs, config).to(device)
     optimizer = optim.Adam(
         [
             {"params": q_network.input_scaling, "lr": lr_input_scaling},
@@ -206,7 +213,7 @@ def dqn_quantum_jumanji(config: dict):
             {"params": q_network.weights, "lr": lr_weights},
         ]
     )
-    target_network = DQNAgentQuantum(num_actions, config).to(device)
+    target_network = DQNAgentQuantum(envs, config).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -219,10 +226,9 @@ def dqn_quantum_jumanji(config: dict):
     start_time = time.time()
 
     # global parameters to log
-    print_interval = 50
+    print_interval = 10
     global_episodes = 0
     episode_returns = deque(maxlen=print_interval)
-    episode_approximation_ratio = deque(maxlen=print_interval)
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=seed)
@@ -252,20 +258,15 @@ def dqn_quantum_jumanji(config: dict):
                     metrics["episode_reward"] = infos["episode"]["r"].tolist()[idx]
                     metrics["episode_length"] = infos["episode"]["l"].tolist()[idx]
                     metrics["global_step"] = global_step
-                    if "approximation_ratio" in infos.keys():
-                        metrics["approximation_ratio"] = infos["approximation_ratio"][
-                            idx
-                        ]
-                        episode_approximation_ratio.append(
-                            metrics["approximation_ratio"]
-                        )
                     log_metrics(config, metrics, report_path)
 
             if global_episodes % print_interval == 0 and not ray.is_initialized():
-                logging_info = f"Global step: {global_step}  Mean return: {np.mean(episode_returns)}"
-                if len(episode_approximation_ratio) > 0:
-                    logging_info += f"  Mean approximation ratio: {np.mean(episode_approximation_ratio)}"
-                print(logging_info)
+                print(
+                    "Global step: ",
+                    global_step,
+                    " Mean return: ",
+                    np.mean(episode_returns),
+                )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
@@ -325,39 +326,41 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "dqn_quantum_jumanji"  # Name of the trial
+        trial_name: str = "dqn_quantum_discrete_state"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = False  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
-        env_id: str = "Knapsack-v1"  # Environment ID
-        num_items: int = 4
-        total_budget: float = 2
+        env_id: str = "FrozenLake-v1"  # Environment ID
+        is_slippery: bool = False 
 
         # Algorithm parameters
         num_envs: int = 1  # Number of environments
         seed: int = None  # Seed for reproducibility
         buffer_size: int = 1000  # Size of the replay buffer
-        total_timesteps: int = 100000  # Total number of timesteps
+        total_timesteps: int = 30000  # Total number of timesteps
         start_e: float = 1.0  # Starting value of epsilon for exploration
         end_e: float = 0.01  # Ending value of epsilon for exploration
         exploration_fraction: float = 0.35  # Fraction of total timesteps for exploration
         learning_starts: int = 100  # Timesteps before learning starts
         train_frequency: int = 10  # Frequency of training
         batch_size: int = 32  # Batch size for training
-        gamma: float = 0.99  # Discount factor
-        target_network_frequency: int = 100  # Frequency of target network updates
-        tau: float = 0.01  # Soft update coefficient
-        lr_input_scaling: float = 0.01  # Learning rate for input scaling
-        lr_weights: float = 0.01  # Learning rate for variational parameters
-        lr_output_scaling: float = 0.01  # Learning rate for output scaling
+        gamma: float = 0.95  # Discount factor
+        target_network_frequency: int = 10  # Frequency of target network updates
+        tau: float = 0.9  # Soft update coefficient
+        lr_input_scaling: float = 0.001  # Learning rate for input scaling
+        lr_weights: float = 0.001  # Learning rate for variational parameters
+        lr_output_scaling: float = 0.001  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
         num_qubits: int = 4  # Number of qubits
-        num_layers: int = 2  # Number of layers in the quantum circuit
+        num_layers: int = 5  # Number of layers in the quantum circuit
         device: str = "lightning.qubit"  # Quantum device
         diff_method: str = "adjoint"  # Differentiation method
-        save_model: bool = False  # Save the model after the run
+        save_model: bool = True  # Save the model after the run
+        state_encoding: str = (
+            "binary"  # Type of state encoding, either "binary" or "onehot"
+        )
 
     config = vars(Config())
 
@@ -376,4 +379,4 @@ if __name__ == "__main__":
         yaml.dump(config, file)
 
     # Start the agent training
-    dqn_quantum_jumanji(config)
+    dqn_quantum_discrete_state(config)
