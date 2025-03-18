@@ -8,7 +8,7 @@ project_name:           cleanqrl
 ray_local_mode:         False
 num_cpus:               12
 num_gpus:               0
-ray_num_trial_samples:  3
+num_samples:            3
 cpus_per_worker:        1
 gpus_per_worker:        0
 

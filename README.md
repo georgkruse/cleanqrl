@@ -104,7 +104,7 @@ class Config:
 
 ```
 
-As you can see, the config is devided into 3 parts:
+As you can see, the config is divided into 3 parts:
 
 * **General parameters**: Here the name of your experiment as well as the logging path is defined. All metrics will be logged in a ```result.json``` file in the result folder which will have the time of the experiment execution as a prefix. You can also use [wandb](https://wandb.ai/site) for enhanced metric logging. 
 * **Environment parameters**: This is in the simplest case just the string of the gym environment. For jumanji environments as well as for your custom environments, you can also specify additional parameters here (see #Tutorials for details).
