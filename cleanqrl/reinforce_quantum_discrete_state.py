@@ -213,6 +213,7 @@ def reinforce_quantum_discrete_state(config):
     global_episodes = 0
     print_interval = 30
     episode_returns = deque(maxlen=print_interval)
+    circuit_evaluations = 0
 
     # TRY NOT TO MODIFY: start the game
     start_time = time.time()
@@ -231,6 +232,7 @@ def reinforce_quantum_discrete_state(config):
                 action.cpu().numpy()
             )
             rewards.append(reward)
+            circuit_evaluations += envs.num_envs
             log_probs.append(log_prob)
             done = np.any(terminations) or np.any(truncations)
 
@@ -250,7 +252,10 @@ def reinforce_quantum_discrete_state(config):
         loss = torch.cat(
             [-log_prob * Gt for log_prob, Gt in zip(log_probs, discounted_rewards)]
         ).sum()
-
+        # For each backward pass we need to evaluate the circuit due to the parameter 
+        # shift rule at least twice for each parameter on real hardware
+        circuit_evaluations += 2*len(rewards)*num_envs*sum([agent.input_scaling.numel(), agent.weights.numel(), agent.output_scaling.numel()])
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -268,6 +273,7 @@ def reinforce_quantum_discrete_state(config):
                     metrics["global_step"] = global_step
                     metrics["policy_loss"] = loss.item()
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
+                    metrics["circuit_evaluations"] = circuit_evaluations
                     log_metrics(config, metrics, report_path)
 
             if global_episodes % print_interval == 0 and not ray.is_initialized():

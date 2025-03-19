@@ -13,7 +13,7 @@
 
 * 📜 Single-file implementations of classical and quantum version of 4+ Reinforcement Learning agents 
 * 💾 Tuned and Benchmarked agents (with available configs)
-* 🎮 Integration of [gymnasium](https://gymnasium.farama.org/), [mujoco](https://www.gymlibrary.dev/environments/mujoco/index.html) and [jumanji](https://github.com/instadeepai/jumanji)
+* 🎮 Integration of [gymnasium](https://gymnasium.farama.org/), [mujoco](https://www.gymlibrary.dev/environments/mujoco/index.html) and [jumanji](https://instadeepai.github.io/jumanji/)
 * 📘 Examples on how to enhance the standard QRL agents on a variety of games
 * 📈 Tensorboard Logging
 * 🌱 Local Reproducibility via Seeding

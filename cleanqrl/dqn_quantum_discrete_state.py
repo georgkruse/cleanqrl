@@ -231,6 +231,7 @@ def dqn_quantum_discrete_state(config: dict):
     print_interval = 10
     global_episodes = 0
     episode_returns = deque(maxlen=print_interval)
+    circuit_evaluations = 0
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=seed)
@@ -246,6 +247,7 @@ def dqn_quantum_discrete_state(config: dict):
         else:
             q_values = q_network(torch.Tensor(obs).to(device))
             actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            circuit_evaluations += envs.num_envs
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -289,14 +291,20 @@ def dqn_quantum_discrete_state(config: dict):
                     td_target = data.rewards.flatten() + gamma * target_max * (
                         1 - data.dones.flatten()
                     )
+                    # Quantum hardware does not allow for batch dimension
+                    circuit_evaluations += batch_size
                 old_val = q_network(data.observations).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
-
+                # For each backward pass we need to evaluate the circuit due to the parameter 
+                # shift rule at least twice for each parameter on real hardware
+                circuit_evaluations += 2*batch_size*sum([q_network.input_scaling.numel(), q_network.weights.numel(), q_network.output_scaling.numel()])
+                
                 if global_step % 100 == 0:
                     metrics = {}
                     metrics["td_loss"] = loss.item()
                     metrics["q_values"] = old_val.mean().item()
                     metrics["SPS"] = int(global_step / (time.time() - start_time))
+                    metrics["circuit_evaluations"] = circuit_evaluations
                     log_metrics(config, metrics, report_path)
                 # optimize the model
                 optimizer.zero_grad()
