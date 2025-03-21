@@ -22,7 +22,7 @@ from torch.distributions.categorical import Categorical
 # ENV LOGIC: create your env (with config) here:
 def make_env(env_id, config):
     def thunk():
-        env = gym.make(env_id)
+        env = gym.make(env_id, is_slippery=config["is_slippery"])
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
