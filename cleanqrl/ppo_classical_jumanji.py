@@ -359,18 +359,18 @@ if __name__ == "__main__":
         # Algorithm parameters
         total_timesteps: int = 1000000  # Total timesteps for the experiment
         learning_rate: float = 3e-4  # Learning rate of the optimizer
-        num_envs: int = 1  # Number of parallel environments
+        num_envs: int = 5  # Number of parallel environments
         seed: int = None  # Seed for reproducibility
-        num_steps: int = 2048  # Steps per environment per policy rollout
+        num_steps: int = 128  # Steps per environment per policy rollout
         anneal_lr: bool = True  # Toggle for learning rate annealing
-        gamma: float = 0.9  # Discount factor gamma
+        gamma: float = 0.99  # Discount factor gamma
         gae_lambda: float = 0.95  # Lambda for general advantage estimation
-        num_minibatches: int = 32  # Number of mini-batches
-        update_epochs: int = 10  # Number of epochs to update the policy
+        num_minibatches: int = 4  # Number of mini-batches
+        update_epochs: int = 4  # Number of epochs to update the policy
         norm_adv: bool = True  # Toggle for advantages normalization
         clip_coef: float = 0.2  # Surrogate clipping coefficient
         clip_vloss: bool = True  # Toggle for clipped value function loss
-        ent_coef: float = 0.0  # Entropy coefficient
+        ent_coef: float = 0.01  # Entropy coefficient
         vf_coef: float = 0.5  # Value function coefficient
         max_grad_norm: float = 0.5  # Maximum gradient norm for clipping
         target_kl: float = None  # Target KL divergence threshold
