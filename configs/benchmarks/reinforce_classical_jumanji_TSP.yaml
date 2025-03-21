@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             reinforce_pendulum_classical
+trial_name:             reinforce_tsp_classical
 wandb:                  True
 project_name:           cleanqrl
 
@@ -13,15 +13,15 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   Pendulum-v1
+env_id:   TSP-v1
+num_cities: 4
 
 # algorithm parameters
-seed:               42
-agent:              REINFORCE_classical_continuous_action
+agent:              REINFORCE_classical_jumanji
 total_timesteps:    200000
-lr:                 0.000025
+lr:                 0.00025
 num_envs:           2
 seed:               42
 gamma:              0.99
-cuda: False
-save_model: True
+cuda:               False
+save_model:         False

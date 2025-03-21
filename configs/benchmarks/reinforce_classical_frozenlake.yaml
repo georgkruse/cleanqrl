@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             reinforce_pendulum_classical
+trial_name:             reinforce_frozenlake
 wandb:                  True
 project_name:           cleanqrl
 
@@ -13,15 +13,15 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   Pendulum-v1
+env_id:   FrozenLake-v1
+is_slippery: False
 
 # algorithm parameters
-seed:               42
-agent:              REINFORCE_classical_continuous_action
+agent:              reinforce_classical_discrete_state
 total_timesteps:    200000
-lr:                 0.000025
-num_envs:           2
+lr:                 0.01 
+num_envs:           5
 seed:               42
 gamma:              0.99
-cuda: False
-save_model: True
+cuda:               False
+save_model:         False

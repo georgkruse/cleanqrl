@@ -1,6 +1,6 @@
 # general parameters
 trial_path:             logs
-trial_name:             ppo_pendulum_classical
+trial_name:             ppo_tsp_classical
 wandb:                  True
 project_name:           cleanqrl
 
@@ -13,19 +13,20 @@ cpus_per_worker:        1
 gpus_per_worker:        0
 
 # environment parameters
-env_id:   Pendulum-v1
+env_id:   TSP-v1
+num_cities: 4
 
 # algorithm parameters
-agent:               PPO_classical_continuous_action
+agent:               PPO_classical_jumanji
 total_timesteps:    200000
-learning_rate:      0.001
-num_envs:           2
+learning_rate:      0.0003
+num_envs:           5
 seed:               42
-num_steps:          1024
+num_steps:          128
 anneal_lr:          True
 gamma:              0.99
 gae_lambda:         0.95
-num_minibatches:    16
+num_minibatches:    4
 update_epochs:      4
 norm_adv:           True
 clip_coef:          0.2
