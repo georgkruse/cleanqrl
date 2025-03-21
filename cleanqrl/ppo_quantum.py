@@ -30,13 +30,7 @@ class ArctanNormalizationWrapper(gym.ObservationWrapper):
 def make_env(env_id, config):
     def thunk():
         env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(
-            env
-        )  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        env = gym.wrappers.NormalizeReward(env, gamma=config["gamma"])
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         # The observation wrapper has a big impact on quantum agent performance. May need to be adjusted.
         env = ArctanNormalizationWrapper(env)
         return env
