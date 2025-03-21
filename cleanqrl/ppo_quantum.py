@@ -68,7 +68,7 @@ def parameterized_quantum_circuit(
     if agent_type == "actor":
         return [qml.expval(qml.PauliZ(wires=i)) for i in range(num_actions)]
     elif agent_type == "critic":
-        return [qml.expval(qml.PauliX(0))]
+        return [qml.expval(qml.PauliZ(0))]
 
 
 # ALGO LOGIC: initialize your agent here:
@@ -103,7 +103,9 @@ class PPOAgentQuantum(nn.Module):
         )
         # trainable weights are initialized randomly between -pi and pi
         self.weights_actor = nn.Parameter(
-            torch.rand(self.num_layers, self.num_qubits * 2) * 2 * torch.pi - torch.pi,
+            torch.FloatTensor(self.num_layers, self.num_qubits * 2).uniform_(
+                -np.pi, np.pi
+            ),
             requires_grad=True,
         )
 
@@ -277,6 +279,7 @@ def ppo_quantum(config):
     global_episodes = 0
     print_interval = 10
     episode_returns = deque(maxlen=print_interval)
+    circuit_evaluations = 0
 
     # TRY NOT TO MODIFY: start the game
     start_time = time.time()
@@ -301,6 +304,7 @@ def ppo_quantum(config):
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
+                circuit_evaluations += 2*num_envs
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -340,6 +344,7 @@ def ppo_quantum(config):
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
+            circuit_evaluations += num_envs
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(num_steps)):
@@ -375,6 +380,7 @@ def ppo_quantum(config):
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
                     b_obs[mb_inds], b_actions.long()[mb_inds]
                 )
+                circuit_evaluations += 2*num_envs*minibatch_size
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -416,7 +422,10 @@ def ppo_quantum(config):
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - ent_coef * entropy_loss + v_loss * vf_coef
-
+                # For each backward pass we need to evaluate the circuit due to the parameter 
+                # shift rule at least twice for each parameter on real hardware
+                circuit_evaluations += 2*minibatch_size*sum([agent.input_scaling_actor.numel(), agent.weights_actor.numel(), agent.output_scaling_actor.numel(), agent.input_scaling_critic.numel(), agent.weights_critic.numel(), agent.output_scaling_critic.numel()])
+        
                 optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(agent.parameters(), max_grad_norm)
@@ -442,6 +451,7 @@ def ppo_quantum(config):
         metrics["clipfrac"] = np.mean(clipfracs)
         metrics["explained_variance"] = np.mean(explained_var)
         metrics["SPS"] = int(global_step / (time.time() - start_time))
+        metrics["circuit_evaluations"] = circuit_evaluations
         log_metrics(config, metrics, report_path)
 
     if config["save_model"]:

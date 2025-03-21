@@ -58,7 +58,7 @@ if __name__ == "__main__":
         param_space=config,
         run_config=tune.RunConfig(storage_path=config["path"]),
         tune_config=tune.TuneConfig(
-            num_samples=config["ray_num_trial_samples"],
+            num_samples=config["num_samples"],
             trial_dirname_creator=trial_name_creator,
         ),
     )

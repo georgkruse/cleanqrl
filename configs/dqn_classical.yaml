@@ -7,7 +7,7 @@ wandb:                  True
 ray_local_mode:         False
 num_cpus:               10
 num_gpus:               0
-ray_num_trial_samples:  10
+num_samples:            10
 cpus_per_worker:        3
 gpus_per_worker:        0
 
