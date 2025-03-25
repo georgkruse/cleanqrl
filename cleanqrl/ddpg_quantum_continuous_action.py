@@ -52,8 +52,8 @@ def parameterized_quantum_circuit(
 ):
     for layer in range(num_layers):
         for i in range(observation_size):
-            qml.RY(input_scaling[layer, i] * x[i], wires=[i])
-            qml.RZ(input_scaling[layer, i + observation_size] * x[i], wires=[i])
+            qml.RY(input_scaling[layer, i] * x[:, i], wires=[i])
+            qml.RZ(input_scaling[layer, i + observation_size] * x[:, i], wires=[i])
 
         for i in range(num_qubits):
             qml.RZ(weights[layer, i], wires=[i])
@@ -138,7 +138,7 @@ class Actor(nn.Module):
         self.config = config
         self.observation_size = np.array(
             envs.single_observation_space.shape
-        ).prod() + np.prod(envs.single_action_space.shape)
+        ).prod()
         self.num_actions = np.prod(envs.single_action_space.shape)
         self.num_qubits = config["num_qubits"]
         self.num_layers = config["num_layers"]
@@ -414,7 +414,7 @@ if __name__ == "__main__":
         # General parameters
         trial_name: str = "ddpg_classical_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
-        wandb: bool = False  # Use wandb to log experiment data
+        wandb: bool = True  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
 
         # Environment parameters
@@ -436,7 +436,7 @@ if __name__ == "__main__":
         lr_weights: float = 0.01  # Learning rate for variational parameters
         lr_output_scaling: float = 0.01  # Learning rate for output scaling
         cuda: bool = False  # Whether to use CUDA
-        num_qubits: int = 5  # Number of qubits
+        num_qubits: int = 4  # Number of qubits
         num_layers: int = 5  # Number of layers in the quantum circuit
         device: str = "lightning.qubit"  # Quantum device
         diff_method: str = "adjoint"  # Differentiation method
