@@ -412,7 +412,7 @@ if __name__ == "__main__":
     @dataclass
     class Config:
         # General parameters
-        trial_name: str = "ddpg_classical_continuous_action"  # Name of the trial
+        trial_name: str = "ddpg_quantum_continuous_action"  # Name of the trial
         trial_path: str = "logs"  # Path to save logs relative to the parent directory
         wandb: bool = True  # Use wandb to log experiment data
         project_name: str = "cleanqrl"  # If wandb is used, name of the wandb-project
@@ -430,7 +430,7 @@ if __name__ == "__main__":
         batch_size: int = 256  # Batch size
         exploration_noise: float = 0.1  # Std of Gaussian exploration noise
         learning_starts: int = 25e3  # Timesteps before learning starts
-        policy_frequency: int = 2  # Frequency of policy updates
+        policy_frequency: int = 25  # Frequency of policy updates
         seed: int = None  # Seed for reproducibility
         lr_input_scaling: float = 0.01  # Learning rate for input scaling
         lr_weights: float = 0.01  # Learning rate for variational parameters
