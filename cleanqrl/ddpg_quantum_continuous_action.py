@@ -426,7 +426,7 @@ if __name__ == "__main__":
         learning_rate: float = 3e-4  # Learning rate
         num_envs: int = 1  # Number of environments
         gamma: float = 0.99  # discount factor
-        tau: float = 0.003  # Target network update rate
+        tau: float = 0.005  # Target network update rate
         batch_size: int = 256  # Batch size
         exploration_noise: float = 0.1  # Std of Gaussian exploration noise
         learning_starts: int = 25e3  # Timesteps before learning starts
